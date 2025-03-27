@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
-  Container,
   Grid,
   Typography,
   Card,
@@ -68,7 +67,7 @@ const Home = () => {
   ];
 
   return (
-    <Container sx={{ width: '100%', maxWidth: '100% !important', px: { xs: 2, md: 4 } }}>
+    <Box sx={{ width: '100%', overflow: 'hidden' }}>
       {/* Hero Section */}
       <Box
         sx={{
@@ -310,7 +309,7 @@ const Home = () => {
           </Button>
         </Box>
       </motion.div>
-    </Container>
+    </Box>
   );
 };
 
