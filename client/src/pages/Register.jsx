@@ -44,7 +44,7 @@ const Register = () => {
       setLoading(true);
       setError('');
       await loginWithGoogle();
-      navigate('/my-room');
+      navigate('/my-rooms');
     } catch (err) {
       setError('Failed to sign up with Google: ' + err.message);
     } finally {

@@ -37,7 +37,7 @@ const Login = () => {
       setLoading(true);
       setError('');
       await loginWithGoogle();
-      navigate('/my-room');
+      navigate('/my-rooms');
     } catch (err) {
       if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not enabled in Firebase. Please enable it in Firebase Console > Authentication > Sign-in method.');
@@ -56,7 +56,7 @@ const Login = () => {
       setError('');
       setLoading(true);
       await login(formData.email, formData.password);
-      navigate('/my-room');
+      navigate('/my-rooms');
     } catch (err) {
       setError('Failed to log in: ' + err.message);
     } finally {
