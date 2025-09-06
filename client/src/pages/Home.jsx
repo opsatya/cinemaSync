@@ -27,7 +27,7 @@ const Home = () => {
 
   const handleCreateRoom = () => {
     // In a real app, this would create a room and then navigate
-    navigate('/theater/new-room-123');
+    navigate('/create-room');
   };
 
   const containerVariants = {

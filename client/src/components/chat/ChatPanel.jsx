@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -11,41 +11,25 @@ import {
 } from '@mui/material';
 import { Send, SentimentSatisfiedAlt } from '@mui/icons-material';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../../context/AuthContext';
+import { socket } from '../../context/socket';
 
-const ChatPanel = ({ users, roomId }) => {
+const ChatPanel = ({ users, roomId, messages, setMessages }) => {
   const theme = useTheme();
   const messagesEndRef = useRef(null);
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: 'Alex',
-      avatar: 'A',
-      text: 'Hey everyone! Ready for movie night?',
-      timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(),
-    },
-    {
-      id: 2,
-      sender: 'Taylor',
-      avatar: 'T',
-      text: 'Absolutely! So excited for this one',
-      timestamp: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-    },
-    {
-      id: 3,
-      sender: 'System',
-      text: 'Jordan joined the room',
-      isSystem: true,
-      timestamp: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
-    },
-    {
-      id: 4,
-      sender: 'Jordan',
-      avatar: 'J',
-      text: 'Hi everyone! Sorry I\'m late',
-      timestamp: new Date(Date.now() - 1000 * 60 * 1).toISOString(),
-    },
-  ]);
+  const { currentUser } = useAuth();
+
+  const userMap = useMemo(() => {
+    const map = {};
+    users.forEach(user => {
+      const participant = user.user_id ? user : user.participants[0];
+      if (participant) {
+        map[participant.user_id] = participant;
+      }
+    });
+    return map;
+  }, [users]);
 
   // Scroll to bottom of messages when new messages arrive
   useEffect(() => {
@@ -57,15 +41,13 @@ const ChatPanel = ({ users, roomId }) => {
   };
 
   const handleSendMessage = () => {
-    if (message.trim()) {
-      const newMessage = {
-        id: messages.length + 1,
-        sender: 'You',
-        avatar: 'Y',
-        text: message,
-        timestamp: new Date().toISOString(),
+    if (message.trim() && currentUser) {
+      const messageData = {
+        room_id: roomId,
+        user_id: currentUser.uid,
+        message: message,
       };
-      setMessages([...messages, newMessage]);
+      socket.emit('chat_message', messageData);
       setMessage('');
     }
   };
@@ -83,13 +65,24 @@ const ChatPanel = ({ users, roomId }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const getSenderInfo = (userId) => {
+    if (userId === currentUser?.uid) {
+      return { name: 'You', avatar: currentUser.displayName?.charAt(0) || 'Y' };
+    }
+    const user = Object.values(userMap).find(u => u.user_id === userId);
+    return {
+      name: user?.name || userId.substring(0, 6),
+      avatar: user?.name?.charAt(0) || '?'
+    };
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {/* Chat Header */}
       <Box sx={{ p: 2, borderBottom: `1px solid ${theme.palette.divider}` }}>
         <Typography variant="h6">Chat Room</Typography>
         <Typography variant="body2" color="text.secondary">
-          {users.filter(user => user.online).length} online
+          {users.length} online
         </Typography>
       </Box>
 
@@ -116,8 +109,8 @@ const ChatPanel = ({ users, roomId }) => {
       >
         <AnimatePresence>
           {messages.map((msg) => (
-            <motion.div
-              key={msg.id}
+            <motion.div_
+              key={msg.timestamp || msg.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3 }}
@@ -142,7 +135,7 @@ const ChatPanel = ({ users, roomId }) => {
                   </Typography>
                 </Box>
               ) : (
-                <Box
+                <Box_
                   sx={{
                     display: 'flex',
                     alignItems: 'flex-start',
@@ -150,20 +143,21 @@ const ChatPanel = ({ users, roomId }) => {
                     mb: 1,
                   }}
                 >
+                  _
                   <Avatar
                     sx={{
-                      bgcolor: msg.sender === 'You' ? theme.palette.primary.main : theme.palette.secondary.main,
+                      bgcolor: msg.user_id === currentUser?.uid ? theme.palette.primary.main : theme.palette.secondary.main,
                       width: 32,
                       height: 32,
                       fontSize: '0.875rem',
                     }}
                   >
-                    {msg.avatar}
+                    {getSenderInfo(msg.user_id).avatar}
                   </Avatar>
                   <Box sx={{ flexGrow: 1 }}>
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
-                        {msg.sender}
+                        {getSenderInfo(msg.user_id).name}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {formatTime(msg.timestamp)}
@@ -174,7 +168,7 @@ const ChatPanel = ({ users, roomId }) => {
                       sx={{
                         p: 1.5,
                         borderRadius: '12px',
-                        backgroundColor: msg.sender === 'You' ? 'rgba(109, 40, 217, 0.2)' : 'rgba(30, 41, 59, 0.7)',
+                        backgroundColor: msg.user_id === currentUser?.uid ? 'rgba(109, 40, 217, 0.2)' : 'rgba(30, 41, 59, 0.7)',
                         maxWidth: '100%',
                         wordBreak: 'break-word',
                       }}
@@ -182,9 +176,9 @@ const ChatPanel = ({ users, roomId }) => {
                       <Typography variant="body2">{msg.text}</Typography>
                     </Paper>
                   </Box>
-                </Box>
+                </Box_>
               )}
-            </motion.div>
+            </motion.div_>
           ))}
           <div ref={messagesEndRef} />
         </AnimatePresence>

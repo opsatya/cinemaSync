@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -19,6 +19,8 @@ import {
   Tab,
   useTheme,
   Divider,
+  CircularProgress,
+  Alert,
 } from '@mui/material';
 import {
   Add,
@@ -33,53 +35,34 @@ import {
   FavoriteBorder,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
+import { fetchActiveRooms } from '../utils/api';
 
 const MyRooms = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const [tabValue, setTabValue] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [rooms, setRooms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [favoriteRooms, setFavoriteRooms] = useState([1, 3]); // IDs of favorited rooms
 
-  // Mock data for rooms
-  const mockRooms = [
-    {
-      id: 1,
-      name: 'Friday Movie Night',
-      description: 'Weekly movie night with friends',
-      participants: 5,
-      lastActive: '2025-03-26',
-      isPrivate: true,
-      currentMovie: 'Inception',
-    },
-    {
-      id: 2,
-      name: 'Sci-Fi Marathon',
-      description: 'Watching all the classic sci-fi films',
-      participants: 3,
-      lastActive: '2025-03-24',
-      isPrivate: true,
-      currentMovie: 'The Matrix',
-    },
-    {
-      id: 3,
-      name: 'Documentary Club',
-      description: 'Educational documentaries every Sunday',
-      participants: 8,
-      lastActive: '2025-03-22',
-      isPrivate: false,
-      currentMovie: 'Planet Earth',
-    },
-    {
-      id: 4,
-      name: 'Horror Movie Night',
-      description: 'Not for the faint of heart',
-      participants: 4,
-      lastActive: '2025-03-20',
-      isPrivate: true,
-      currentMovie: 'The Shining',
-    },
-  ];
+  useEffect(() => {
+    const loadRooms = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const activeRooms = await fetchActiveRooms();
+        setRooms(activeRooms);
+      } catch (err) {
+        setError(err.message || 'Could not fetch rooms.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    loadRooms();
+  }, []);
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -106,14 +89,14 @@ const MyRooms = () => {
   };
 
   // Filter rooms based on search query and active tab
-  const filteredRooms = mockRooms
+  const filteredRooms = rooms
     .filter(room => {
       const matchesSearch = room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           room.description.toLowerCase().includes(searchQuery.toLowerCase());
       
       if (tabValue === 0) return matchesSearch; // All rooms
       if (tabValue === 1) return matchesSearch && favoriteRooms.includes(room.id); // Favorites
-      if (tabValue === 2) return matchesSearch && new Date(room.lastActive) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Recent (last 7 days)
+      if (tabValue === 2) return matchesSearch && new Date(room.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Recent (last 7 days)
       
       return matchesSearch;
     });
@@ -225,16 +208,27 @@ const MyRooms = () => {
             
             <Divider sx={{ mb: 3 }} />
             
-            {filteredRooms.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 5 }}>
-                <Typography variant="h6" color="text.secondary" gutterBottom>
-                  No rooms found
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {searchQuery ? 'Try a different search term' : 'Create your first room to get started'}
-                </Typography>
+            {loading && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}>
+                <CircularProgress />
               </Box>
-            ) : (
+            )}
+
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>
+            )}
+
+            {!loading && !error && (
+              filteredRooms.length === 0 ? (
+                <Box sx={{ textAlign: 'center', py: 5 }}>
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    No rooms found
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {searchQuery ? 'Try a different search term' : 'There are no public rooms currently, why not create one?'}
+                  </Typography>
+                </Box>
+              ) : (
               <Grid container spacing={{ xs: 2, sm: 3 }}>
                 {filteredRooms.map((room) => (
                   <Grid item xs={12} sm={6} lg={4} key={room.id}>
@@ -275,7 +269,7 @@ const MyRooms = () => {
                                 height: 32,
                                 fontSize: '0.875rem',
                               }}
-                            >
+                            >_
                               {room.name.charAt(0)}
                             </Avatar>
                             <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
@@ -298,22 +292,22 @@ const MyRooms = () => {
                           
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                             <MovieFilter fontSize="small" color="primary" />
-                            <Typography variant="body2">
-                              {room.currentMovie}
+                            <Typography variant="body2" noWrap>
+                              {room.movie_source?.value || 'Movie not set'}
                             </Typography>
                           </Box>
                           
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
                             <People fontSize="small" color="primary" />
                             <Typography variant="body2">
-                              {room.participants} participants
+                              {room.participants.length} participants
                             </Typography>
                           </Box>
                           
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <AccessTime fontSize="small" color="primary" />
                             <Typography variant="body2">
-                              Last active: {room.lastActive}
+                              Created: {new Date(room.created_at).toLocaleDateString()}
                             </Typography>
                           </Box>
                         </CardContent>
@@ -344,7 +338,7 @@ const MyRooms = () => {
                           <Button 
                             variant="contained" 
                             size="small"
-                            onClick={() => handleJoinRoom(room.id)}
+                            onClick={() => handleJoinRoom(room.room_id)}
                             sx={{ 
                               borderRadius: '8px',
                               bgcolor: theme.palette.primary.main,
@@ -358,7 +352,7 @@ const MyRooms = () => {
                   </Grid>
                 ))}
               </Grid>
-            )}
+            ))}
           </Paper>
         </Box>
       </motion.div>

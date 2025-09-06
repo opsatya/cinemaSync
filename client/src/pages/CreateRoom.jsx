@@ -17,13 +17,19 @@ import {
   Divider,
   useTheme,
   Chip,
+  Alert,
 } from '@mui/material';
 import { Add, Movie, Link as LinkIcon, Public, Lock } from '@mui/icons-material';
 import { motion } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
+import { createRoom as apiCreateRoom } from '../utils/api';
 
 const CreateRoom = () => {
   const theme = useTheme();
   const navigate = useNavigate();
+  const { backendToken } = useAuth();
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const [roomData, setRoomData] = useState({
     name: '',
     description: '',
@@ -45,12 +51,37 @@ const CreateRoom = () => {
     setRoomData({ ...roomData, [name]: checked });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('Creating room with:', roomData);
-    // In a real app, this would create a room and generate a room ID
-    const mockRoomId = 'room-' + Math.random().toString(36).substring(2, 8);
-    navigate(`/theater/${mockRoomId}`);
+    if (!backendToken) {
+      setError("You are not authenticated. Please log in again.");
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const payload = {
+        name: roomData.name,
+        description: roomData.description,
+        is_private: roomData.privacy === 'private',
+        password: roomData.password || null,
+        enable_chat: roomData.allowChat,
+        enable_reactions: roomData.allowReactions,
+        movie_source: {
+          type: roomData.movieSource,
+          value: roomData.movieLink || null,
+        },
+      };
+
+      const newRoom = await apiCreateRoom(payload, backendToken);
+      navigate(`/theater/${newRoom.room_id}`);
+    } catch (err) {
+      setError(err.message || 'Failed to create room.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -89,6 +120,11 @@ const CreateRoom = () => {
               border: '1px solid rgba(255, 255, 255, 0.1)',
             }}
           >
+            {error && (
+              <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+                {error}
+              </Alert>
+            )}
             <Grid container spacing={3}>
               {/* Room Details Section */}
               <Grid item xs={12}>
@@ -289,6 +325,7 @@ const CreateRoom = () => {
                     fullWidth
                     variant="contained"
                     size="large"
+                    disabled={loading}
                     startIcon={<Add />}
                     sx={{ 
                       py: 1.5,
@@ -299,7 +336,7 @@ const CreateRoom = () => {
                       }
                     }}
                   >
-                    Create Room
+                    {loading ? 'Creating...' : 'Create Room'}
                   </Button>
                 </motion.div>
               </Grid>

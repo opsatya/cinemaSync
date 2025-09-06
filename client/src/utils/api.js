@@ -1,6 +1,14 @@
 // API service for CinemaSync
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
 
+// Helper to create authenticated headers
+const getAuthHeaders = (token) => {
+  return {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+  };
+};
+
 /**
  * Fetch movies list from Google Drive
  * @param {string} folderId - Optional folder ID to list
@@ -143,11 +151,101 @@ export const getDirectStreamUrl = (fileId) => {
   return `${API_BASE_URL}/stream/${fileId}`;
 };
 
+/**
+ * Exchange a user identity for a backend JWT.
+ * @param {object} identity - User identity object { user_id, name, email }
+ * @returns {Promise<string>} - The backend JWT.
+ */
+export const exchangeToken = async (identity) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/exchange`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(identity),
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to exchange token');
+    }
+    return data.token;
+  } catch (error) {
+    console.error('Error exchanging token:', error);
+    throw error;
+  }
+};
+
+/**
+ * Fetch active public rooms
+ * @returns {Promise<Array>}
+ */
+export const fetchActiveRooms = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/rooms/`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to fetch rooms');
+    }
+    return data.rooms;
+  } catch (error) {
+    console.error('Error fetching active rooms:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create a new room
+ * @param {object} roomData - The data for the new room
+ * @param {string} token - The user's backend JWT
+ * @returns {Promise<object>}
+ */
+export const createRoom = async (roomData, token) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/rooms/`, {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify(roomData),
+    });
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to create room');
+    }
+    return data.room;
+  } catch (error) {
+    console.error('Error creating room:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get details for a specific room
+ * @param {string} roomId
+ * @returns {Promise<object>}
+ */
+export const getRoomDetails = async (roomId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/rooms/${roomId}`);
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.message || 'Room not found');
+    }
+    return data.room;
+  } catch (error) {
+    console.error('Error getting room details:', error);
+    throw error;
+  }
+};
+
 export default {
   fetchMoviesList,
   getStreamLink,
   getMovieMetadata,
   searchMovies,
   getRecentMovies,
-  getDirectStreamUrl
+  getDirectStreamUrl,
+  exchangeToken,
+  fetchActiveRooms,
+  createRoom,
+  getRoomDetails,
 };

@@ -11,6 +11,7 @@ export const AuthProvider = ({ children }) => {
   // Use our custom Firebase auth hook
   const {
     currentUser,
+    backendToken,
     loading,
     error,
     register,
@@ -21,6 +22,7 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     currentUser,
+    backendToken,
     register,
     login,
     loginWithGoogle,
@@ -31,7 +33,7 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 };
