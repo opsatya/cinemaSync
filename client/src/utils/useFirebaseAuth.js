@@ -1,46 +1,66 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   createUserWithEmailAndPassword, 
   signInWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithPopup,
+  signInWithRedirect,
   updateProfile
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
-import { exchangeToken } from './api';
+import { exchangeToken } from '../utils/api';
 
 /**
- * Custom hook for Firebase authentication
+ * Custom hook for Firebase authentication with backend token exchange
  * Provides methods for authentication and user state management
  */
 export const useFirebaseAuth = () => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [backendToken, setBackendToken] = useState(localStorage.getItem('backendToken'));
+  const [backendToken, setBackendToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const getBackendToken = useCallback(async (user) => {
-    if (!user) {
-      localStorage.removeItem('backendToken');
-      setBackendToken(null);
-      return;
-    }
+  // Exchange Firebase ID token for backend JWT
+  const exchangeForBackendToken = async (firebaseUser) => {
+    // DEBUG: Checkpoint 1 - Entry log
+    console.log('🔁 [exchangeForBackendToken] called with user:', firebaseUser ? { uid: firebaseUser.uid, email: firebaseUser.email } : null);
     try {
-      const token = await exchangeToken({
-        user_id: user.uid,
-        name: user.displayName,
-        email: user.email,
-      });
-      localStorage.setItem('backendToken', token);
+      if (!firebaseUser) {
+        console.warn('⚠️ [exchangeForBackendToken] No firebaseUser provided. Clearing backend token.');
+        setBackendToken(null);
+        return;
+      }
+
+      // Get Firebase ID token
+      const idToken = await firebaseUser.getIdToken(true);
+      console.log('🪪 [exchangeForBackendToken] Retrieved Firebase ID token. length =', idToken ? idToken.length : 0);
+
+      // Prepare identity payload
+      const identity = {
+        user_id: firebaseUser.uid,
+        name: firebaseUser.displayName || '',
+        email: firebaseUser.email || '',
+      };
+
+      console.log('📤 [exchangeForBackendToken] Sending identity to backend for exchange:', identity);
+
+      // Send identity + Firebase token to backend
+      const token = await exchangeToken(identity, idToken);
+
+      // Save backend token in state + localStorage
       setBackendToken(token);
-    } catch (e) {
-      console.error("Failed to get backend token", e);
-      setError("Could not authenticate with the server. Please try again.");
-      await signOut(auth);
+      localStorage.setItem('backendToken', token);
+      console.log('✅ [exchangeForBackendToken] Backend token stored. length =', token ? token.length : 0);
+
+    } catch (err) {
+      console.error('❌ [exchangeForBackendToken] Failed to exchange token:', err);
+      setError('Failed to authenticate with backend');
+      setBackendToken(null);
+      localStorage.removeItem('backendToken');
     }
-  }, []);
+  };
+
 
   // Register with email and password
   const register = async (email, password, displayName) => {
@@ -52,9 +72,13 @@ export const useFirebaseAuth = () => {
       if (displayName) {
         await updateProfile(userCredential.user, { displayName });
       }
+      
+      // Exchange for backend token
+      await exchangeForBackendToken(userCredential.user);
+      
       return userCredential.user;
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Registration failed');
       throw err;
     }
   };
@@ -64,9 +88,13 @@ export const useFirebaseAuth = () => {
     try {
       setError(null);
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Exchange for backend token
+      await exchangeForBackendToken(userCredential.user);
+      
       return userCredential.user;
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Login failed');
       throw err;
     }
   };
@@ -76,10 +104,14 @@ export const useFirebaseAuth = () => {
     try {
       setError(null);
       const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithPopup(auth, provider);
+      const userCredential = await signInWithRedirect(auth, provider);
+      
+      // Exchange for backend token
+      await exchangeForBackendToken(userCredential.user);
+      
       return userCredential.user;
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Google login failed');
       throw err;
     }
   };
@@ -89,30 +121,50 @@ export const useFirebaseAuth = () => {
     try {
       setError(null);
       await signOut(auth);
-      localStorage.removeItem('backendToken');
       setBackendToken(null);
+      localStorage.removeItem('backendToken');
     } catch (err) {
-      setError(err.message);
+      setError(err.message || 'Logout failed');
       throw err;
     }
   };
+
+  // Refresh backend token manually
+  const refreshBackendToken = async () => {
+    if (currentUser) {
+      await exchangeForBackendToken(currentUser);
+    }
+  };
+
+  // Preload any existing backend token from localStorage (mitigate initial timing)
+  useEffect(() => {
+    const existing = localStorage.getItem('backendToken');
+    if (existing) {
+      console.log('🗃️ [useFirebaseAuth] Preloaded backendToken from localStorage. length =', existing.length);
+      setBackendToken(existing);
+    }
+  }, []);
 
   // Subscribe to auth state changes
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
+
       if (user) {
-        await getBackendToken(user);
+        // Always refresh backend token when user signs in
+        await exchangeForBackendToken(user);
       } else {
-        localStorage.removeItem('backendToken');
+        // User signed out
         setBackendToken(null);
+        localStorage.removeItem('backendToken');
       }
+
       setLoading(false);
     });
 
     // Cleanup subscription on unmount
     return () => unsubscribe();
-  }, [getBackendToken]);
+  }, []);
 
   return {
     currentUser,
@@ -122,6 +174,7 @@ export const useFirebaseAuth = () => {
     register,
     login,
     loginWithGoogle,
-    logout
+    logout,
+    refreshBackendToken, // expose manual refresh
   };
 };

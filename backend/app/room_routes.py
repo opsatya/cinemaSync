@@ -1,63 +1,20 @@
-from flask import Blueprint, jsonify, request, current_app
+from flask import Blueprint, jsonify, request, g
 from app.models import Room
-import jwt
+from app.auth_middleware import token_required  # IMPORT THE MIDDLEWARE
 import os
-from functools import wraps
 
 room_bp = Blueprint('room', __name__, url_prefix='/api/rooms')
 
-# JWT Secret key
-JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
-
-# Authentication decorator
-def token_required(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        token = None
-        
-        # Check if token is in headers
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            if auth_header.startswith('Bearer '):
-                token = auth_header.split(' ')[1]
-        
-        # Check if token is in cookies
-        if not token and 'token' in request.cookies:
-            token = request.cookies['token']
-            
-        # Check if token is in query parameters
-        if not token and 'token' in request.args:
-            token = request.args.get('token')
-            
-        if not token:
-            return jsonify({
-                'success': False,
-                'message': 'Authentication token is missing'
-            }), 401
-            
-        try:
-            # Verify token
-            data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
-            user_id = data['user_id']
-        except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': f'Invalid token: {str(e)}'
-            }), 401
-            
-        return f(user_id, *args, **kwargs)
-    
-    return decorated
+# Remove the duplicate token_required decorator - use the imported one instead
 
 @room_bp.route('/', methods=['GET'])
 def get_active_rooms():
     """Get list of active public rooms"""
     try:
-        # Get pagination parameters
-        limit = int(request.args.get('limit', 20))
-        skip = int(request.args.get('skip', 0))
+        # Get pagination parameters with validation
+        limit = min(max(int(request.args.get('limit', 20)), 1), 100)
+        skip = max(int(request.args.get('skip', 0)), 0)
         
-        # Get active rooms
         rooms = Room.get_active_rooms(limit, skip)
         
         # Remove sensitive data
@@ -65,6 +22,7 @@ def get_active_rooms():
             if '_id' in room:
                 del room['_id']
             if 'password' in room:
+                room['password_required'] = room['password'] is not None
                 del room['password']
         
         return jsonify({
@@ -76,34 +34,54 @@ def get_active_rooms():
                 'skip': skip
             }
         }), 200
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'message': f'Invalid pagination parameters: {str(e)}'
+        }), 400
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Failed to fetch rooms: {str(e)}'
         }), 500
 
 @room_bp.route('/', methods=['POST'])
-@token_required
-def create_room(user_id):
+@token_required  # USE THE IMPORTED MIDDLEWARE
+def create_room():
     """Create a new room"""
     try:
-        # Get request data
         data = request.get_json()
         
-        # Add user_id as host_id
-        data['host_id'] = user_id
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Request body is required'
+            }), 400
         
-        # Create room
+        # Validate required fields
+        required_fields = ['name', 'movie_source']
+        missing_fields = [field for field in required_fields if not data.get(field)]
+        
+        if missing_fields:
+            return jsonify({
+                'success': False,
+                'message': f'Missing required fields: {", ".join(missing_fields)}'
+            }), 400
+        
+        # Use the user_id from g object (set by middleware)
+        data['host_id'] = g.current_user_id
+        
         room = Room.create_room(data)
         
-        # Remove sensitive data
         if '_id' in room:
             del room['_id']
         
         return jsonify({
             'success': True,
-            'room': room
+            'room': room,
+            'message': 'Room created successfully'
         }), 201
+        
     except ValueError as e:
         return jsonify({
             'success': False,
@@ -112,15 +90,20 @@ def create_room(user_id):
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Failed to create room: {str(e)}'
         }), 500
 
 @room_bp.route('/<room_id>', methods=['GET'])
 def get_room(room_id):
     """Get room details"""
     try:
-        # Get room
-        room = Room.find_by_id(room_id)
+        if not room_id or not room_id.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Room ID is required'
+            }), 400
+        
+        room = Room.find_by_id(room_id.strip())
         
         if not room:
             return jsonify({
@@ -128,11 +111,9 @@ def get_room(room_id):
                 'message': 'Room not found'
             }), 404
         
-        # Remove sensitive data
         if '_id' in room:
             del room['_id']
         if 'password' in room:
-            # Only indicate if password is required
             room['password_required'] = room['password'] is not None
             del room['password']
         
@@ -143,19 +124,22 @@ def get_room(room_id):
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Failed to get room details: {str(e)}'
         }), 500
 
 @room_bp.route('/<room_id>/join', methods=['POST'])
-@token_required
-def join_room(user_id, room_id):
+@token_required  # USE THE IMPORTED MIDDLEWARE
+def join_room(room_id):
     """Join a room"""
     try:
-        # Get request data
-        data = request.get_json() or {}
+        if not room_id or not room_id.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Room ID is required'
+            }), 400
         
-        # Get room
-        room = Room.find_by_id(room_id)
+        data = request.get_json() or {}
+        room = Room.find_by_id(room_id.strip())
         
         if not room:
             return jsonify({
@@ -163,30 +147,26 @@ def join_room(user_id, room_id):
                 'message': 'Room not found'
             }), 404
         
-        # Check if room is active
         if not room.get('is_active', True):
             return jsonify({
                 'success': False,
                 'message': 'Room is no longer active'
             }), 400
         
-        # Check if room is password protected
         if room.get('password') and data.get('password') != room['password']:
             return jsonify({
                 'success': False,
                 'message': 'Invalid password'
             }), 401
         
-        # Add user to room
         try:
-            room = Room.add_participant(room_id, user_id)
+            room = Room.add_participant(room_id.strip(), g.current_user_id)
         except ValueError as e:
             return jsonify({
                 'success': False,
                 'message': str(e)
             }), 400
         
-        # Remove sensitive data
         if '_id' in room:
             del room['_id']
         if 'password' in room:
@@ -194,29 +174,90 @@ def join_room(user_id, room_id):
         
         return jsonify({
             'success': True,
-            'room': room
+            'room': room,
+            'message': 'Successfully joined room'
         }), 200
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Failed to join room: {str(e)}'
         }), 500
 
 @room_bp.route('/<room_id>/leave', methods=['POST'])
-@token_required
-def leave_room(user_id, room_id):
+@token_required  # USE THE IMPORTED MIDDLEWARE
+def leave_room(room_id):
     """Leave a room"""
     try:
-        # Remove user from room
+        if not room_id or not room_id.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Room ID is required'
+            }), 400
+        
         try:
-            room = Room.remove_participant(room_id, user_id)
+            room = Room.remove_participant(room_id.strip(), g.current_user_id)
         except ValueError as e:
             return jsonify({
                 'success': False,
                 'message': str(e)
             }), 400
         
-        # Remove sensitive data
+        if room and '_id' in room:
+            del room['_id']
+        if room and 'password' in room:
+            del room['password']
+        
+        return jsonify({
+            'success': True,
+            'room': room,
+            'message': 'Successfully left room'
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to leave room: {str(e)}'
+        }), 500
+
+@room_bp.route('/<room_id>/playback', methods=['POST'])
+@token_required  # USE THE IMPORTED MIDDLEWARE
+def update_playback_state(room_id):
+    """Update room playback state (only host can do this)"""
+    try:
+        if not room_id or not room_id.strip():
+            return jsonify({
+                'success': False,
+                'message': 'Room ID is required'
+            }), 400
+        
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'message': 'Playback state data is required'
+            }), 400
+        
+        room = Room.find_by_id(room_id.strip())
+        
+        if not room:
+            return jsonify({
+                'success': False,
+                'message': 'Room not found'
+            }), 404
+        
+        if room.get('host_id') != g.current_user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Only room host can control playback'
+            }), 403
+        
+        playback_state = {
+            'is_playing': data.get('is_playing', False),
+            'current_time': data.get('current_time', 0),
+        }
+        
+        room = Room.update_playback_state(room_id.strip(), playback_state)
+        
         if '_id' in room:
             del room['_id']
         if 'password' in room:
@@ -224,10 +265,11 @@ def leave_room(user_id, room_id):
         
         return jsonify({
             'success': True,
-            'room': room
+            'room': room,
+            'message': 'Playback state updated'
         }), 200
     except Exception as e:
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': f'Failed to update playback state: {str(e)}'
         }), 500

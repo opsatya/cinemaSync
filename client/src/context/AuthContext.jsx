@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { useFirebaseAuth } from '../hooks/useFirebaseAuth';
+import { useFirebaseAuth } from '../utils/useFirebaseAuth';
 
 const AuthContext = createContext();
 
@@ -17,7 +17,8 @@ export const AuthProvider = ({ children }) => {
     register,
     login,
     loginWithGoogle,
-    logout
+    logout,
+    refreshBackendToken,
   } = useFirebaseAuth();
 
   const value = {
@@ -27,6 +28,7 @@ export const AuthProvider = ({ children }) => {
     login,
     loginWithGoogle,
     logout,
+    refreshBackendToken,
     loading,
     error
   };

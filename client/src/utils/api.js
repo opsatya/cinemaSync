@@ -1,6 +1,9 @@
 // API service for CinemaSync
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
 
+// DEBUG: Verify environment variable is loaded correctly
+console.log('🔍 API_BASE_URL:', API_BASE_URL);
+
 // Helper to create authenticated headers
 const getAuthHeaders = (token) => {
   return {
@@ -13,7 +16,7 @@ const getAuthHeaders = (token) => {
  * Fetch movies list from Google Drive
  * @param {string} folderId - Optional folder ID to list
  * @param {boolean} recursive - Whether to fetch recursively
- * @param {number} maxDepth - Maximum depth for recursive fetching
+ * @param {number} maxDepth m depth for recursive fetching
  * @returns {Promise} - Promise with movies data
  */
 export const fetchMoviesList = async (folderId = null, recursive = false, maxDepth = 2) => {
@@ -156,25 +159,45 @@ export const getDirectStreamUrl = (fileId) => {
  * @param {object} identity - User identity object { user_id, name, email }
  * @returns {Promise<string>} - The backend JWT.
  */
-export const exchangeToken = async (identity) => {
+export const exchangeToken = async (identity, idToken) => {
+  // DEBUG: Checkpoint 2 - Log request payload
+  console.log('🚀 [exchangeToken] Exchanging token for identity:', identity);
+
   try {
     const response = await fetch(`${API_BASE_URL}/auth/exchange`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
       },
       body: JSON.stringify(identity),
     });
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.message || 'Failed to exchange token');
+
+    // DEBUG: Log raw response
+    console.log('📬 [exchangeToken] Raw response from backend:', response);
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error('❌ [exchangeToken] Backend error response:', errorBody);
+      throw new Error(`Failed to exchange token: ${response.status} ${response.statusText}`);
     }
+
+    const data = await response.json();
+
+    if (!data.token) {
+      throw new Error(data.message || 'Backend did not return a token');
+    }
+
+    // DEBUG: Log successful token
+    console.log('✅ [exchangeToken] Successfully received backend token.');
+
     return data.token;
   } catch (error) {
     console.error('Error exchanging token:', error);
     throw error;
   }
 };
+
 
 /**
  * Fetch active public rooms

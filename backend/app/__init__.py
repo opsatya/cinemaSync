@@ -36,6 +36,7 @@ def create_app():
     
     # Import and register blueprints
     from app.routes import api_bp
+    from app.auth_middleware import token_required
     from app.room_routes import room_bp
     from app.auth_routes import auth_bp
     from app.google_oauth_routes import google_bp

@@ -11,8 +11,9 @@ import {
 import { auth } from '../firebase/config';
 
 /**
- * Custom hook for Firebase authentication
+ * Provides methods for authentication and user state management.
  * Provides methods for authentication and user state management
+ * Provides methods for authentication and user state management.
  */
 export const useFirebaseAuth = () => {
   const [currentUser, setCurrentUser] = useState(null);

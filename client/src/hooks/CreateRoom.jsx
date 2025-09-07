@@ -29,7 +29,8 @@ const CreateRoom = () => {
   const navigate = useNavigate();
   const { backendToken } = useAuth();
   // DEBUG: Checkpoint 3 - Log the backendToken value from context
-  console.log('🔑 [CreateRoom] backendToken from context:', backendToken ? `(length=${backendToken.length})` : backendToken);
+  console.log('🔑 [CreateRoom] Backend token from context:', backendToken);
+
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [roomData, setRoomData] = useState({
@@ -55,10 +56,8 @@ const CreateRoom = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('📝 [CreateRoom] Submitting form. backendToken present?', !!backendToken);
     if (!backendToken) {
       setError("You are not authenticated. Please log in again.");
-      console.warn('🚫 [CreateRoom] Submit blocked. Missing backendToken.');
       return;
     }
 
@@ -78,12 +77,10 @@ const CreateRoom = () => {
           value: roomData.movieLink || null,
         },
       };
-      console.log('📦 [CreateRoom] Payload to createRoom:', payload);
+
       const newRoom = await apiCreateRoom(payload, backendToken);
-      console.log('🎉 [CreateRoom] Room created:', newRoom);
       navigate(`/theater/${newRoom.room_id}`);
     } catch (err) {
-      console.error('❌ [CreateRoom] Failed to create room:', err);
       setError(err.message || 'Failed to create room.');
     } finally {
       setLoading(false);
