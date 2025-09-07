@@ -39,6 +39,7 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [driveAvailable, setDriveAvailable] = useState(true);
   const [currentFolder, setCurrentFolder] = useState(null);
   const [folderHistory, setFolderHistory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -57,8 +58,10 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
 
   // Load recent movies
   useEffect(() => {
-    loadRecentMovies();
-  }, []);
+    if (driveAvailable) {
+      loadRecentMovies();
+    }
+  }, [driveAvailable]);
 
   // Load movies from a specific folder
   const loadMovies = async (folderId = null) => {
@@ -86,8 +89,17 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         setFolderHistory(prev => [...prev, folderId]);
       }
     } catch (error) {
-      console.error('Error loading movies:', error);
-      setError('Failed to load movies. Please try again.');
+      const msg = error?.message || String(error);
+      // Detect missing Google Drive credentials and provide user guidance
+      if (/google drive credentials file not found/i.test(msg)) {
+        setDriveAvailable(false);
+        setFolders([]);
+        setMovies([]);
+        setError('Google Drive is not configured on the server. You can still paste a direct video link when creating a room, or ask the admin to configure Drive credentials.');
+      } else {
+        console.error('Error loading movies:', error);
+        setError('Failed to load movies. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -99,7 +111,17 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
       const recentMovies = await getRecentMovies();
       setRecentMovies(recentMovies);
     } catch (error) {
-      console.error('Error loading recent movies:', error);
+      const msg = error?.message || String(error);
+      if (/google drive credentials file not found/i.test(msg)) {
+        setDriveAvailable(false);
+        setRecentMovies([]);
+        // Don't spam error UI here if loadMovies already presented it
+        if (!error) {
+          setError('Google Drive is not configured on the server. Recent movies are unavailable.');
+        }
+      } else {
+        console.error('Error loading recent movies:', error);
+      }
     }
   };
 

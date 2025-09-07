@@ -173,13 +173,15 @@ const Theater = () => {
     const onNewChat = (msg) => setMessages((prev) => [...prev, msg]);
     const onNewReaction = (data) => showReactionBubble(data.reaction);
     const onConnectError = (err) => {
-      // Provide detailed diagnostics
-      console.error('Socket Connect Error object:', err);
+      // Ignore engine connect_error if we're already connected (common with polling)
+      if (socket.connected) {
+        // Downgrade to debug to avoid alarming logs when connection is healthy
+        console.debug('Socket connect_error while connected (ignored):', err?.message || err);
+        return;
+      }
       const msg = (err && (err.message || err.description)) || 'Unknown error';
-      // Debounce showing the error; if we connect shortly after, suppress it
       if (connectErrorTimer.current) clearTimeout(connectErrorTimer.current);
       connectErrorTimer.current = setTimeout(() => {
-        // Only surface after a few attempts to avoid noisy transient errors
         if (!socket.connected && reconnectAttempts.current >= 3) {
           setError(`Socket connect error: ${msg}`);
         }
