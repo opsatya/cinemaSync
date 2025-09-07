@@ -6,6 +6,17 @@ import os
 # Initialize SocketIO
 socketio = SocketIO()
 
+# Utility: recursively convert datetime objects to ISO strings so
+# payloads are JSON serializable for Socket.IO
+def _to_json_safe(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_safe(v) for v in obj]
+    return obj
+
 def init_socketio(app):
     """Initialize SocketIO with the Flask app"""
     socketio.init_app(app, cors_allowed_origins="*")
@@ -64,24 +75,25 @@ def register_handlers():
             join_room(room_id)
             
             # Notify all users in the room
+            safe_room = _to_json_safe(room_data)
             emit('user_joined', {
                 'user_id': user_id,
                 'room_id': room_id,
-                'participants': room_data['participants']
+                'participants': safe_room['participants']
             }, to=room_id)
             
             # Send room data to the client
             emit('room_joined', {
                 'room': {
-                    'room_id': room_data['room_id'],
-                    'name': room_data['name'],
-                    'description': room_data['description'],
-                    'movie_source': room_data['movie_source'],
-                    'enable_chat': room_data['enable_chat'],
-                    'enable_reactions': room_data['enable_reactions'],
-                    'participants': room_data['participants'],
-                    'playback_state': room_data['playback_state'],
-                    'host_id': room_data['host_id']
+                    'room_id': safe_room['room_id'],
+                    'name': safe_room['name'],
+                    'description': safe_room['description'],
+                    'movie_source': safe_room['movie_source'],
+                    'enable_chat': safe_room['enable_chat'],
+                    'enable_reactions': safe_room['enable_reactions'],
+                    'participants': safe_room['participants'],
+                    'playback_state': safe_room['playback_state'],
+                    'host_id': safe_room['host_id']
                 }
             })
             

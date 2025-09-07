@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Box,
@@ -67,10 +67,15 @@ const Theater = () => {
   const [reaction, setReaction] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [joined, setJoined] = useState(false);
   // Private room join state
   const [passwordInput, setPasswordInput] = useState('');
+  const passwordRef = useRef('');
   const [showPasswordDialog, setShowPasswordDialog] = useState(false);
   const [joinError, setJoinError] = useState('');
+  const connectErrorTimer = useRef(null);
+  const reconnectAttempts = useRef(0);
+  const joinInProgress = useRef(false);
   
   // Movie selection state
   const [selectedMovie, setSelectedMovie] = useState(null);
@@ -87,6 +92,10 @@ const Theater = () => {
         if (roomDetails.movie_source && roomDetails.movie_source.type === 'googleDrive' && roomDetails.movie_source.value) {
           setSelectedMovie({ id: roomDetails.movie_source.value, name: 'Movie' });
         }
+        // If room is private, show password dialog until joined
+        if ((roomDetails.is_private || roomDetails.password) && !joined) {
+          setShowPasswordDialog(true);
+        }
       } catch (err) {
         setError(err.message || 'Could not load room.');
       } finally {
@@ -94,7 +103,7 @@ const Theater = () => {
       }
     };
     fetchRoom();
-  }, [roomId]);
+  }, [roomId, joined]);
 
   const showReactionBubble = useCallback((emoji) => {
     setReaction(emoji);
@@ -105,17 +114,23 @@ const Theater = () => {
   // Helper to attempt join when ready
   const attemptJoin = useCallback(() => {
     if (!socket.connected || !room || !currentUser) return;
+    if (joined || joinInProgress.current) {
+      return;
+    }
     const payload = { room_id: roomId, user_id: currentUser.uid };
-    if (room.is_private) {
-      if (!passwordInput) {
+    const enteredPassword = (passwordRef.current || '').trim();
+    const requiresPassword = Boolean(room?.is_private) || enteredPassword.length > 0;
+    if (requiresPassword) {
+      if (!enteredPassword) {
         setShowPasswordDialog(true);
         return;
       }
-      payload.password = passwordInput;
+      payload.password = enteredPassword;
     }
     console.log('📡 [Socket] Emitting join_room with payload:', { ...payload, password: payload.password ? '***' : undefined });
+    joinInProgress.current = true;
     socket.emit('join_room', payload);
-  }, [room, currentUser, roomId, passwordInput]);
+  }, [room, currentUser, roomId, joined]);
 
   // Socket.IO connection and event handling
   useEffect(() => {
@@ -127,46 +142,113 @@ const Theater = () => {
       console.log('🔐 [Socket] Auth token attached for connection.');
     }
 
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    socket.on('connect', () => {
+    // Register listeners BEFORE connecting to avoid race conditions
+    // Avoid duplicate listener registration across renders
+    const engine = socket.io?.engine;
+    const onConnect = () => {
       console.log('🔌 [Socket] Connected. Will attempt room join...');
+      setError(null); // clear any previous connection errors
+      if (connectErrorTimer.current) {
+        clearTimeout(connectErrorTimer.current);
+        connectErrorTimer.current = null;
+      }
       attemptJoin();
-    });
-
-    socket.on('user_joined', (data) => setUsers(data.participants));
-    socket.on('user_left', (data) => setUsers(data.participants));
-    socket.on('room_joined', (data) => {
+    };
+    const onConnectionResponse = (data) => {
+      console.log('🔭 [Socket] connection_response:', data);
+    };
+    const onUserJoined = (data) => setUsers(data.participants);
+    const onUserLeft = (data) => setUsers(data.participants);
+    const onRoomJoined = (data) => {
       console.log('✅ [Socket] Room joined');
       setJoinError('');
       setShowPasswordDialog(false);
       setRoom(data.room);
       setUsers(data.room.participants);
       setIsPlaying(data.room.playback_state.is_playing);
-    });
-    socket.on('playback_updated', (data) => setIsPlaying(data.playback_state.is_playing));
-    socket.on('new_chat_message', (msg) => setMessages((prev) => [...prev, msg]));
-    socket.on('new_reaction', (data) => showReactionBubble(data.reaction));
-    socket.on('connect_error', (err) => {
-      console.error('Socket Connect Error:', err?.message || err);
-      setError(`Socket connect error: ${err?.message || 'Unknown error'}`);
-    });
-    socket.on('error', (err) => {
-      console.error('Socket Error:', err.message);
-      setError(`Socket error: ${err.message}`);
-      if (err.message && /invalid password/i.test(err.message)) {
+      setJoined(true);
+      joinInProgress.current = false;
+    };
+    const onPlaybackUpdated = (data) => setIsPlaying(data.playback_state.is_playing);
+    const onNewChat = (msg) => setMessages((prev) => [...prev, msg]);
+    const onNewReaction = (data) => showReactionBubble(data.reaction);
+    const onConnectError = (err) => {
+      // Provide detailed diagnostics
+      console.error('Socket Connect Error object:', err);
+      const msg = (err && (err.message || err.description)) || 'Unknown error';
+      // Debounce showing the error; if we connect shortly after, suppress it
+      if (connectErrorTimer.current) clearTimeout(connectErrorTimer.current);
+      connectErrorTimer.current = setTimeout(() => {
+        // Only surface after a few attempts to avoid noisy transient errors
+        if (!socket.connected && reconnectAttempts.current >= 3) {
+          setError(`Socket connect error: ${msg}`);
+        }
+      }, 4000);
+    };
+    const onIoError = (err) => console.error('Engine.IO error:', err);
+    const onServerError = (err) => {
+      const msg = err?.message || 'Unknown server error';
+      console.error('Socket server error:', msg);
+      setError(`Socket error: ${msg}`);
+      if (/invalid password/i.test(msg)) {
         setJoinError('Invalid password. Please try again.');
         setShowPasswordDialog(true);
+        setJoined(false);
+        joinInProgress.current = false;
       }
-    });
+    };
+    const onReconnectAttempt = (n) => { reconnectAttempts.current = n; console.warn('Socket reconnect attempt:', n); };
+    const onReconnectError = (err) => console.error('Socket reconnect error:', err);
+    const onIoConnectError = (err) => console.error('Engine connect_error:', err);
+    const onIoConnectTimeout = () => { console.error('Socket connect timeout'); setError('Socket connect error: timeout'); };
+
+    socket.on('connect', onConnect);
+    socket.on('connection_response', onConnectionResponse);
+    socket.on('user_joined', onUserJoined);
+    socket.on('user_left', onUserLeft);
+    socket.on('room_joined', onRoomJoined);
+    socket.on('playback_updated', onPlaybackUpdated);
+    socket.on('new_chat_message', onNewChat);
+    socket.on('new_reaction', onNewReaction);
+    socket.on('connect_error', onConnectError);
+    socket.io.on('error', onIoError);
+    socket.on('error', onServerError);
+    socket.io.on('reconnect_attempt', onReconnectAttempt);
+    socket.io.on('reconnect_error', onReconnectError);
+    socket.io.on('connect_error', onIoConnectError);
+    socket.io.on('connect_timeout', onIoConnectTimeout);
+
+    // Now connect after listeners are set
+    const opening = socket.connected ? false : (engine?.readyState === 'opening');
+    if (!socket.connected && !opening) {
+      console.log('🔁 [Socket] Initiating connection...');
+      socket.connect();
+    }
 
     return () => {
       if (currentUser) {
         socket.emit('leave_room', { room_id: roomId, user_id: currentUser.uid });
       }
-      socket.removeAllListeners(); // 🔑 safer than disconnecting every time
+      socket.off('connect', onConnect);
+      socket.off('connection_response', onConnectionResponse);
+      socket.off('user_joined', onUserJoined);
+      socket.off('user_left', onUserLeft);
+      socket.off('room_joined', onRoomJoined);
+      socket.off('playback_updated', onPlaybackUpdated);
+      socket.off('new_chat_message', onNewChat);
+      socket.off('new_reaction', onNewReaction);
+      socket.off('connect_error', onConnectError);
+      socket.io.off('error', onIoError);
+      socket.off('error', onServerError);
+      socket.io.off('reconnect_attempt', onReconnectAttempt);
+      socket.io.off('reconnect_error', onReconnectError);
+      socket.io.off('connect_error', onIoConnectError);
+      socket.io.off('connect_timeout', onIoConnectTimeout);
+      if (connectErrorTimer.current) {
+        clearTimeout(connectErrorTimer.current);
+        connectErrorTimer.current = null;
+      }
+      reconnectAttempts.current = 0;
     };
   }, [roomId, currentUser, backendToken, attemptJoin, showReactionBubble]);
 
@@ -216,6 +298,60 @@ const Theater = () => {
     return (
       <Container sx={{ mt: 4 }}>
         <Alert severity="error">{error}</Alert>
+      </Container>
+    );
+  }
+
+  // Gate the theater content for private rooms until the socket join succeeds
+  if (room && (room.is_private || room.password) && !joined) {
+    return (
+      <Container sx={{ mt: 4 }}>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          This room is private. Enter the password to join.
+        </Alert>
+        {showPasswordDialog && (
+          <Dialog open onClose={() => setShowPasswordDialog(false)}>
+            <DialogTitle>Enter Room Password</DialogTitle>
+            <DialogContent>
+              {joinError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {joinError}
+                </Alert>
+              )}
+              <TextField
+                autoFocus
+                margin="dense"
+                label="Password"
+                type="password"
+                fullWidth
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  passwordRef.current = e.target.value;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    setJoinError('');
+                    attemptJoin();
+                  }
+                }}
+              />
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setShowPasswordDialog(false)}>Cancel</Button>
+              <Button
+                variant="contained"
+                onClick={() => {
+                  setJoinError('');
+                  attemptJoin();
+                }}
+              >
+                Join
+              </Button>
+            </DialogActions>
+          </Dialog>
+        )}
       </Container>
     );
   }
@@ -497,7 +633,7 @@ const Theater = () => {
             type="password"
             fullWidth
             value={passwordInput}
-            onChange={(e) => setPasswordInput(e.target.value)}
+            onChange={(e) => { setPasswordInput(e.target.value); passwordRef.current = e.target.value; }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
