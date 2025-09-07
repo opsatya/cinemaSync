@@ -1,9 +1,10 @@
-from flask import Blueprint, request, jsonify, redirect
+from flask import Blueprint, request, jsonify, redirect, g
 import os
 import jwt
 from urllib.parse import urlencode
 from google_auth_oauthlib.flow import Flow
 from app.models import UserToken
+from app.auth_middleware import token_required
 from datetime import datetime
 
 google_bp = Blueprint('google_oauth', __name__, url_prefix='/api/google')
@@ -12,6 +13,7 @@ JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
+GOOGLE_PROJECT_ID = os.getenv('GOOGLE_PROJECT_ID') # e.g., 'cinemasync'
 GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI')
 
 SCOPES = [
@@ -22,18 +24,24 @@ SCOPES = [
 ]
 
 def _build_flow():
-    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET or not GOOGLE_REDIRECT_URI:
-        raise RuntimeError('Google OAuth env not set: GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI')
+    required_vars = {
+        'GOOGLE_CLIENT_ID': GOOGLE_CLIENT_ID,
+        'GOOGLE_CLIENT_SECRET': GOOGLE_CLIENT_SECRET,
+        'GOOGLE_PROJECT_ID': GOOGLE_PROJECT_ID,
+        'GOOGLE_REDIRECT_URI': GOOGLE_REDIRECT_URI
+    }
+    missing_vars = [key for key, value in required_vars.items() if not value]
+    if missing_vars:
+        raise RuntimeError(f"Missing Google OAuth env vars: {', '.join(missing_vars)}")
+
     flow = Flow.from_client_config(
         {
             'web': {
                 'client_id': GOOGLE_CLIENT_ID,
-                'project_id': 'cinemasync',
+                'project_id': GOOGLE_PROJECT_ID,
                 'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
                 'token_uri': 'https://oauth2.googleapis.com/token',
-                'auth_provider_x509_cert_url': 'https://www.googleapis.com/oauth2/v1/certs',
                 'client_secret': GOOGLE_CLIENT_SECRET,
-                'redirect_uris': [GOOGLE_REDIRECT_URI]
             }
         },
         scopes=SCOPES
@@ -80,6 +88,20 @@ def get_auth_url():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
+@google_bp.route('/tokens/status', methods=['GET'])
+@token_required
+def tokens_status():
+    """Returns whether the current user has stored Google tokens."""
+    try:
+        user_id = getattr(g, 'current_user_id', None)
+        if not user_id:
+            return jsonify({'success': False, 'message': 'Missing user id'}), 401
+        tokens = UserToken.get_tokens(user_id, 'google') or {}
+        has_tokens = bool(tokens.get('access_token') or tokens.get('refresh_token'))
+        return jsonify({'success': True, 'connected': has_tokens})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @google_bp.route('/auth/callback', methods=['GET'])
 def auth_callback():
     try:
@@ -120,4 +142,24 @@ def auth_callback():
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
-
+@google_bp.route('/health', methods=['GET'])
+def health():
+    """Lightweight health endpoint for Google OAuth configuration.
+    Does NOT expose secrets. Intended for frontend to decide whether to show
+    'Connect Google Drive' or Drive UI elements.
+    """
+    try:
+        required_vars = {
+            'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
+            'GOOGLE_CLIENT_SECRET': bool(GOOGLE_CLIENT_SECRET),
+            'GOOGLE_PROJECT_ID': bool(GOOGLE_PROJECT_ID),
+            'GOOGLE_REDIRECT_URI': bool(GOOGLE_REDIRECT_URI),
+        }
+        env_ok = all(required_vars.values())
+        return jsonify({
+            'success': True,
+            'env_ok': env_ok,
+            'missing': [k for k, v in required_vars.items() if not v],
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500

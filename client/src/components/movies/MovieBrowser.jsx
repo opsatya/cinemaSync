@@ -32,14 +32,17 @@ import {
   Link as LinkIcon
 } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
-import { fetchMoviesList, searchMovies, getRecentMovies, getStreamLink } from '../../utils/api';
+import { fetchMoviesList, searchMovies, getRecentMovies, getStreamLink, getGoogleHealth, getGoogleTokensStatus, getGoogleAuthUrl } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 
 const MovieBrowser = ({ onSelectMovie, roomId }) => {
+  const { backendToken } = useAuth();
   const [movies, setMovies] = useState([]);
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [driveAvailable, setDriveAvailable] = useState(true);
+  const [driveConnected, setDriveConnected] = useState(false);
   const [currentFolder, setCurrentFolder] = useState(null);
   const [folderHistory, setFolderHistory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,17 +54,40 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
   const [streamLink, setStreamLink] = useState('');
   const [streamLinkLoading, setStreamLinkLoading] = useState(false);
 
-  // Load initial movies from root folder
+  // Health + tokens status + initial loads
   useEffect(() => {
-    loadMovies();
-  }, []);
+    const init = async () => {
+      try {
+        const health = await getGoogleHealth();
+        if (!health.env_ok) {
+          setDriveAvailable(false);
+          setError('Google Drive is not configured on the server.');
+          return;
+        }
+        setDriveAvailable(true);
+        if (backendToken) {
+          try {
+            const connected = await getGoogleTokensStatus(backendToken);
+            setDriveConnected(connected);
+          } catch (e) {
+            setDriveConnected(false);
+          }
+        }
+      } catch (e) {
+        // If health check fails, fall back to previous behavior
+        setDriveAvailable(false);
+        setError('Google Drive is not configured on the server.');
+      }
+    };
+    init();
+  }, [backendToken]);
 
-  // Load recent movies
   useEffect(() => {
-    if (driveAvailable) {
+    if (driveAvailable && driveConnected) {
+      loadMovies();
       loadRecentMovies();
     }
-  }, [driveAvailable]);
+  }, [driveAvailable, driveConnected]);
 
   // Load movies from a specific folder
   const loadMovies = async (folderId = null) => {
@@ -102,6 +128,15 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleConnectDrive = async () => {
+    try {
+      const url = await getGoogleAuthUrl(backendToken);
+      window.location.href = url;
+    } catch (e) {
+      setError(e.message || 'Failed to start Google Drive connection');
     }
   };
 
@@ -441,11 +476,23 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
           <Typography>{error}</Typography>
         </Box>
       )}
+
+      {/* Drive connect CTA */}
+      {driveAvailable && !driveConnected && (
+        <Box sx={{ textAlign: 'center', my: 4 }}>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Connect your Google Drive to browse your videos.
+          </Typography>
+          <Button variant="contained" color="primary" onClick={handleConnectDrive}>
+            Connect Google Drive
+          </Button>
+        </Box>
+      )}
       
       {/* Movie grid */}
       <Grid container spacing={2}>
         {/* Show search results */}
-        {searchResults.length > 0 && !loading && (
+        {driveConnected && searchResults.length > 0 && !loading && (
           searchResults.map(movie => (
             <Grid item xs={6} sm={4} md={3} lg={2} key={movie.id}>
               {renderMovieCard(movie)}
@@ -454,7 +501,7 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         )}
         
         {/* Show recent movies */}
-        {showRecent && recentMovies.length > 0 && !loading && (
+        {driveConnected && showRecent && recentMovies.length > 0 && !loading && (
           recentMovies.map(movie => (
             <Grid item xs={6} sm={4} md={3} lg={2} key={movie.id || movie.file_id}>
               {renderMovieCard(movie)}
@@ -463,7 +510,7 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         )}
         
         {/* Show folders and movies when not searching or showing recent */}
-        {!searchResults.length && !showRecent && !loading && (
+        {driveConnected && !searchResults.length && !showRecent && !loading && (
           <>
             {/* Folders */}
             {folders.map(folder => (
@@ -496,7 +543,7 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         )}
         
         {/* No search results message */}
-        {searchQuery && searchResults.length === 0 && !loading && (
+        {driveConnected && searchQuery && searchResults.length === 0 && !loading && (
           <Grid item xs={12}>
             <Box sx={{ textAlign: 'center', my: 4 }}>
               <Typography variant="h6" color="text.secondary">
@@ -507,7 +554,7 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         )}
         
         {/* No recent movies message */}
-        {showRecent && recentMovies.length === 0 && !loading && (
+        {driveConnected && showRecent && recentMovies.length === 0 && !loading && (
           <Grid item xs={12}>
             <Box sx={{ textAlign: 'center', my: 4 }}>
               <Typography variant="h6" color="text.secondary">

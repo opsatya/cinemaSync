@@ -37,7 +37,8 @@ const Login = () => {
       setLoading(true);
       setError('');
       await loginWithGoogle();
-      navigate('/my-rooms');
+      // After successful Google auth, land on home
+      navigate('/');
     } catch (err) {
       if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not enabled in Firebase. Please enable it in Firebase Console > Authentication > Sign-in method.');
@@ -56,9 +57,16 @@ const Login = () => {
       setError('');
       setLoading(true);
       await login(formData.email, formData.password);
-      navigate('/my-rooms');
+      // On successful manual login, land on home
+      navigate('/');
     } catch (err) {
-      setError('Failed to log in: ' + err.message);
+      // If the user doesn't exist, guide them to registration
+      if (err.code === 'auth/user-not-found') {
+        setError('No account found for this email. Please register to continue.');
+        navigate('/register');
+      } else {
+        setError('Failed to log in: ' + (err.message || 'Unknown error'));
+      }
     } finally {
       setLoading(false);
     }

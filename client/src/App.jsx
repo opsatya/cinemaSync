@@ -17,7 +17,7 @@ import MainLayout from './components/layout/MainLayout';
 
 // Protected Route component
 const ProtectedRoute = ({ children }) => {
-  const { currentUser, loading } = useAuth();
+  const { currentUser, backendToken, loading } = useAuth();
   
   if (loading) {
     return (
@@ -34,7 +34,9 @@ const ProtectedRoute = ({ children }) => {
     );
   }
   
-  if (!currentUser) {
+  // Allow route if either Firebase user is present OR we already have a backend token
+  // (backend token is preloaded from localStorage early to avoid a brief redirect loop)
+  if (!currentUser && !backendToken) {
     return <Navigate to="/login" />;
   }
   

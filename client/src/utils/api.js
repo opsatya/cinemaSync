@@ -1,8 +1,9 @@
 // API service for CinemaSync
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
+const DEBUG = import.meta.env.VITE_DEBUG_LOGS === 'true';
 
 // DEBUG: Verify environment variable is loaded correctly
-console.log('🔍 API_BASE_URL:', API_BASE_URL);
+if (DEBUG) console.log('🔍 API_BASE_URL:', API_BASE_URL);
 
 // Helper to create authenticated headers
 const getAuthHeaders = (token) => {
@@ -46,9 +47,41 @@ export const fetchMoviesList = async (folderId = null, recursive = false, maxDep
     
     return data;
   } catch (error) {
-    console.error('Error fetching movies list:', error);
+    const msg = error?.message || String(error);
+    if (/google drive credentials file not found/i.test(msg)) {
+      // Avoid noisy errors for expected missing Drive creds in dev
+      if (DEBUG) console.warn('Drive not configured (movies list):', msg);
+    } else {
+      if (DEBUG) console.error('Error fetching movies list:', error);
+    }
     throw error;
   }
+};
+
+// Google OAuth helpers (per-user Drive)
+export const getGoogleHealth = async () => {
+  const res = await fetch(`${API_BASE_URL.replace(/\/api$/, '')}/api/google/health`);
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Health check failed');
+  return data;
+};
+
+export const getGoogleAuthUrl = async (token) => {
+  const res = await fetch(`${API_BASE_URL.replace(/\/api$/, '')}/api/google/auth/url`, {
+    headers: token ? getAuthHeaders(token) : undefined,
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to get Google auth URL');
+  return data.auth_url;
+};
+
+export const getGoogleTokensStatus = async (token) => {
+  const res = await fetch(`${API_BASE_URL.replace(/\/api$/, '')}/api/google/tokens/status`, {
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to get tokens status');
+  return data.connected;
 };
 
 /**
@@ -88,7 +121,7 @@ export const getMovieMetadata = async (fileId) => {
     
     return data.metadata;
   } catch (error) {
-    console.error('Error getting movie metadata:', error);
+    if (DEBUG) console.error('Error getting movie metadata:', error);
     throw error;
   }
 };
@@ -115,7 +148,7 @@ export const searchMovies = async (query, limit = 20) => {
     
     return data.results;
   } catch (error) {
-    console.error('Error searching movies:', error);
+    if (DEBUG) console.error('Error searching movies:', error);
     throw error;
   }
 };
@@ -140,7 +173,12 @@ export const getRecentMovies = async (limit = 20) => {
     
     return data.movies;
   } catch (error) {
-    console.error('Error getting recent movies:', error);
+    const msg = error?.message || String(error);
+    if (/google drive credentials file not found/i.test(msg)) {
+      if (DEBUG) console.warn('Drive not configured (recent movies):', msg);
+    } else {
+      if (DEBUG) console.error('Error getting recent movies:', error);
+    }
     throw error;
   }
 };
@@ -161,7 +199,7 @@ export const getDirectStreamUrl = (fileId) => {
  */
 export const exchangeToken = async (identity, idToken) => {
   // DEBUG: Checkpoint 2 - Log request payload
-  console.log('🚀 [exchangeToken] Exchanging token for identity:', identity);
+  if (DEBUG) console.log('🚀 [exchangeToken] Exchanging token for identity:', identity);
 
   try {
     const response = await fetch(`${API_BASE_URL}/auth/exchange`, {
@@ -174,11 +212,11 @@ export const exchangeToken = async (identity, idToken) => {
     });
 
     // DEBUG: Log raw response
-    console.log('📬 [exchangeToken] Raw response from backend:', response);
+    if (DEBUG) console.log('📬 [exchangeToken] Raw response from backend:', response);
 
     if (!response.ok) {
       const errorBody = await response.text();
-      console.error('❌ [exchangeToken] Backend error response:', errorBody);
+      if (DEBUG) console.error('❌ [exchangeToken] Backend error response:', errorBody);
       throw new Error(`Failed to exchange token: ${response.status} ${response.statusText}`);
     }
 
@@ -189,11 +227,11 @@ export const exchangeToken = async (identity, idToken) => {
     }
 
     // DEBUG: Log successful token
-    console.log('✅ [exchangeToken] Successfully received backend token.');
+    if (DEBUG) console.log('✅ [exchangeToken] Successfully received backend token.');
 
     return data.token;
   } catch (error) {
-    console.error('Error exchanging token:', error);
+    if (DEBUG) console.error('Error exchanging token:', error);
     throw error;
   }
 };
@@ -212,7 +250,7 @@ export const fetchActiveRooms = async () => {
     }
     return data.rooms;
   } catch (error) {
-    console.error('Error fetching active rooms:', error);
+    if (DEBUG) console.error('Error fetching active rooms:', error);
     throw error;
   }
 };
@@ -236,7 +274,7 @@ export const createRoom = async (roomData, token) => {
     }
     return data.room;
   } catch (error) {
-    console.error('Error creating room:', error);
+    if (DEBUG) console.error('Error creating room:', error);
     throw error;
   }
 };
@@ -255,7 +293,7 @@ export const getRoomDetails = async (roomId) => {
     }
     return data.room;
   } catch (error) {
-    console.error('Error getting room details:', error);
+    if (DEBUG) console.error('Error getting room details:', error);
     throw error;
   }
 };
