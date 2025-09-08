@@ -6,6 +6,7 @@ import {
   onAuthStateChanged,
   GoogleAuthProvider,
   signInWithRedirect,
+  getRedirectResult,
   updateProfile
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
@@ -29,6 +30,7 @@ export const useFirebaseAuth = () => {
       if (!firebaseUser) {
         console.warn('⚠️ [exchangeForBackendToken] No firebaseUser provided. Clearing backend token.');
         setBackendToken(null);
+        localStorage.removeItem('backendToken');
         return;
       }
 
@@ -45,8 +47,8 @@ export const useFirebaseAuth = () => {
 
       console.log('📤 [exchangeForBackendToken] Sending identity to backend for exchange:', identity);
 
-      // Send identity + Firebase token to backend
-      const token = await exchangeToken(identity, idToken);
+      // Send identity to backend (don't send Firebase token - your backend doesn't use it)
+      const token = await exchangeToken(identity);
 
       // Save backend token in state + localStorage
       setBackendToken(token);
@@ -61,23 +63,27 @@ export const useFirebaseAuth = () => {
     }
   };
 
-
   // Register with email and password
   const register = async (email, password, displayName) => {
     try {
       setError(null);
+      console.log('📝 [register] Starting registration for:', email);
+      
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('✅ [register] Firebase user created:', userCredential.user.uid);
       
       // Update profile with display name if provided
       if (displayName) {
         await updateProfile(userCredential.user, { displayName });
+        console.log('✅ [register] Profile updated with displayName:', displayName);
       }
       
-      // Exchange for backend token
-      await exchangeForBackendToken(userCredential.user);
+      // Note: Don't exchange token here - let onAuthStateChanged handle it
+      console.log('✅ [register] Registration complete, waiting for auth state change...');
       
       return userCredential.user;
     } catch (err) {
+      console.error('❌ [register] Registration failed:', err);
       setError(err.message || 'Registration failed');
       throw err;
     }
@@ -87,30 +93,41 @@ export const useFirebaseAuth = () => {
   const login = async (email, password) => {
     try {
       setError(null);
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('🔐 [login] Starting login for:', email);
       
-      // Exchange for backend token
-      await exchangeForBackendToken(userCredential.user);
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log('✅ [login] Firebase login successful:', userCredential.user.uid);
+      
+      // Note: Don't exchange token here - let onAuthStateChanged handle it
+      console.log('✅ [login] Login complete, waiting for auth state change...');
       
       return userCredential.user;
     } catch (err) {
+      console.error('❌ [login] Login failed:', err);
       setError(err.message || 'Login failed');
       throw err;
     }
   };
 
-  // Login with Google
+  // Login with Google - FIXED VERSION
   const loginWithGoogle = async () => {
     try {
       setError(null);
+      console.log('🔍 [loginWithGoogle] Starting Google authentication...');
+      
       const provider = new GoogleAuthProvider();
-      const userCredential = await signInWithRedirect(auth, provider);
+      provider.setCustomParameters({
+        prompt: 'select_account'
+      });
       
-      // Exchange for backend token
-      await exchangeForBackendToken(userCredential.user);
+      // Use redirect - this will redirect the page
+      await signInWithRedirect(auth, provider);
+      console.log('🔄 [loginWithGoogle] Redirect initiated...');
       
-      return userCredential.user;
+      // Don't return anything here - the page will redirect
+      // The redirect result will be handled in the useEffect below
     } catch (err) {
+      console.error('❌ [loginWithGoogle] Google login failed:', err);
       setError(err.message || 'Google login failed');
       throw err;
     }
@@ -120,10 +137,15 @@ export const useFirebaseAuth = () => {
   const logout = async () => {
     try {
       setError(null);
+      console.log('🚪 [logout] Starting logout...');
+      
       await signOut(auth);
       setBackendToken(null);
       localStorage.removeItem('backendToken');
+      
+      console.log('✅ [logout] Logout complete');
     } catch (err) {
+      console.error('❌ [logout] Logout failed:', err);
       setError(err.message || 'Logout failed');
       throw err;
     }
@@ -132,6 +154,7 @@ export const useFirebaseAuth = () => {
   // Refresh backend token manually
   const refreshBackendToken = async () => {
     if (currentUser) {
+      console.log('🔄 [refreshBackendToken] Manually refreshing token...');
       await exchangeForBackendToken(currentUser);
     }
   };
@@ -145,16 +168,51 @@ export const useFirebaseAuth = () => {
     }
   }, []);
 
+  // Handle Google redirect result - ADDED
+  useEffect(() => {
+    const handleRedirectResult = async () => {
+      try {
+        console.log('🔍 [handleRedirectResult] Checking for redirect result...');
+        const result = await getRedirectResult(auth);
+        
+        if (result && result.user) {
+          console.log('🔄 [handleRedirectResult] Google redirect result received:', result.user.email);
+          // The onAuthStateChanged will handle the token exchange automatically
+        } else {
+          console.log('🔍 [handleRedirectResult] No redirect result found');
+        }
+      } catch (error) {
+        console.error('❌ [handleRedirectResult] Google redirect error:', error);
+        setError('Google authentication failed: ' + error.message);
+      }
+    };
+
+    handleRedirectResult();
+  }, []); // Run once on component mount
+
   // Subscribe to auth state changes
   useEffect(() => {
+    console.log('👂 [useFirebaseAuth] Setting up auth state listener...');
+    
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('🔄 [onAuthStateChanged] Auth state changed:', user ? `User: ${user.email} (${user.uid})` : 'No user');
+      
       setCurrentUser(user);
 
       if (user) {
-        // Always refresh backend token when user signs in
-        await exchangeForBackendToken(user);
+        // Check if we already have a valid backend token for this user
+        const existingToken = localStorage.getItem('backendToken');
+        
+        if (existingToken) {
+          console.log('🗃️ [onAuthStateChanged] Using existing backend token');
+          setBackendToken(existingToken);
+        } else {
+          console.log('🔄 [onAuthStateChanged] No existing token, exchanging for new one...');
+          await exchangeForBackendToken(user);
+        }
       } else {
         // User signed out
+        console.log('🚪 [onAuthStateChanged] User signed out, clearing tokens');
         setBackendToken(null);
         localStorage.removeItem('backendToken');
       }
@@ -163,8 +221,21 @@ export const useFirebaseAuth = () => {
     });
 
     // Cleanup subscription on unmount
-    return () => unsubscribe();
+    return () => {
+      console.log('🧹 [useFirebaseAuth] Cleaning up auth listener');
+      unsubscribe();
+    };
   }, []);
+
+  // Debug logging for state changes
+  useEffect(() => {
+    console.log('📊 [useFirebaseAuth] State update:', {
+      hasCurrentUser: !!currentUser,
+      hasBackendToken: !!backendToken,
+      loading,
+      error: error || 'none'
+    });
+  }, [currentUser, backendToken, loading, error]);
 
   return {
     currentUser,
@@ -175,6 +246,6 @@ export const useFirebaseAuth = () => {
     login,
     loginWithGoogle,
     logout,
-    refreshBackendToken, // expose manual refresh
+    refreshBackendToken,
   };
 };

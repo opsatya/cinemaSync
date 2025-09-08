@@ -15,9 +15,15 @@ import MyRooms from './pages/MyRooms';
 // Layout components
 import MainLayout from './components/layout/MainLayout';
 
-// Protected Route component
+// Protected Route component - for authenticated users only
 const ProtectedRoute = ({ children }) => {
   const { currentUser, backendToken, loading } = useAuth();
+  
+  console.log('🛡️ ProtectedRoute check:', { 
+    hasCurrentUser: !!currentUser, 
+    hasBackendToken: !!backendToken, 
+    loading 
+  });
   
   if (loading) {
     return (
@@ -34,10 +40,44 @@ const ProtectedRoute = ({ children }) => {
     );
   }
   
-  // Allow route if either Firebase user is present OR we already have a backend token
-  // (backend token is preloaded from localStorage early to avoid a brief redirect loop)
+  // More lenient check - allow if either Firebase user OR backend token exists
   if (!currentUser && !backendToken) {
-    return <Navigate to="/login" />;
+    console.log('🚫 Not authenticated, redirecting to login');
+    return <Navigate to="/login" replace />;
+  }
+  
+  return children;
+};
+
+// Public Route component - for unauthenticated users only
+const PublicRoute = ({ children }) => {
+  const { currentUser, backendToken, loading } = useAuth();
+  
+  console.log('🌐 PublicRoute check:', { 
+    hasCurrentUser: !!currentUser, 
+    hasBackendToken: !!backendToken, 
+    loading 
+  });
+  
+  if (loading) {
+    return (
+      <Box 
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh'
+        }}
+      >
+        <CircularProgress color="primary" />
+      </Box>
+    );
+  }
+  
+  // If already authenticated, redirect to home instead of showing login/register
+  if (currentUser || backendToken) {
+    console.log('✅ Already authenticated, redirecting to home');
+    return <Navigate to="/" replace />;
   }
   
   return children;
@@ -62,7 +102,7 @@ const AuthLayout = () => {
 };
 
 function AppContent() {
-  const { currentUser, loading } = useAuth();
+  const { currentUser, backendToken, loading } = useAuth();
   
   // Show loading indicator while auth state is being determined
   if (loading) {
@@ -83,18 +123,14 @@ function AppContent() {
   return (
     <Router>
       <Routes>
-        {/* Public routes with AuthLayout - accessible to everyone */}
+        {/* Public routes - redirect authenticated users to home */}
         <Route element={<AuthLayout />}>
-          <Route path="/register" element={<Register />} />
-          <Route path="/login" element={currentUser ? <Navigate to="/" /> : <Login />} />
+          <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+          <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
         </Route>
         
-        {/* Protected routes with MainLayout */}
-        <Route element={
-          <ProtectedRoute>
-            <MainLayout />
-          </ProtectedRoute>
-        }>
+        {/* Protected routes - require authentication */}
+        <Route element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
           <Route path="/" element={<Home />} />
           <Route path="/theater/:roomId" element={<Theater />} />
           <Route path="/profile" element={<Profile />} />
@@ -102,8 +138,15 @@ function AppContent() {
           <Route path="/my-rooms" element={<MyRooms />} />
         </Route>
         
-        {/* Default route - redirect to register if not authenticated, otherwise to home */}
-        <Route path="*" element={currentUser ? <Navigate to="/" /> : <Navigate to="/register" />} />
+        {/* Fallback routes */}
+        <Route 
+          path="*" 
+          element={
+            (currentUser || backendToken) 
+              ? <Navigate to="/" replace /> 
+              : <Navigate to="/login" replace />
+          } 
+        />
       </Routes>
     </Router>
   );

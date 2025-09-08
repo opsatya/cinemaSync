@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -18,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
   const theme = useTheme();
-  const navigate = useNavigate();
+  // REMOVED: const navigate = useNavigate(); - No longer needed for manual navigation
   const { login, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
@@ -32,14 +32,21 @@ const Login = () => {
     setFormData({ ...formData, [name]: value });
   };
 
+  // FIXED: Removed manual navigation to prevent redirect loops
   const handleGoogleLogin = async () => {
     try {
       setLoading(true);
       setError('');
+      console.log('🔍 Starting Google login...');
+      
       await loginWithGoogle();
-      // After successful Google auth, land on home
-      navigate('/');
+      
+      // REMOVED: navigate('/') - Let PublicRoute component handle the redirect
+      // The auth state will change and route guards will redirect automatically
+      console.log('✅ Google login successful, waiting for redirect...');
+      
     } catch (err) {
+      console.error('❌ Google login error:', err);
       if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not enabled in Firebase. Please enable it in Firebase Console > Authentication > Sign-in method.');
       } else {
@@ -50,20 +57,35 @@ const Login = () => {
     }
   };
 
+  // FIXED: Removed manual navigation to prevent redirect loops
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     try {
       setError('');
       setLoading(true);
+      console.log('🔐 Starting email login for:', formData.email);
+      
       await login(formData.email, formData.password);
-      // On successful manual login, land on home
-      navigate('/');
+      
+      // REMOVED: navigate('/') - Let PublicRoute component handle the redirect
+      // The auth state will change and route guards will redirect automatically
+      console.log('✅ Email login successful, waiting for redirect...');
+      
     } catch (err) {
-      // If the user doesn't exist, guide them to registration
+      console.error('❌ Email login error:', err);
+      
+      // Handle specific error cases
       if (err.code === 'auth/user-not-found') {
         setError('No account found for this email. Please register to continue.');
-        navigate('/register');
+        // Keep manual navigation for error case only
+        setTimeout(() => {
+          window.location.href = '/register';
+        }, 2000);
+      } else if (err.code === 'auth/wrong-password') {
+        setError('Incorrect password. Please try again.');
+      } else if (err.code === 'auth/invalid-email') {
+        setError('Please enter a valid email address.');
       } else {
         setError('Failed to log in: ' + (err.message || 'Unknown error'));
       }
@@ -117,6 +139,7 @@ const Login = () => {
                 {error}
               </Alert>
             )}
+            
             <Button
               fullWidth
               variant="outlined"
@@ -134,7 +157,7 @@ const Login = () => {
                 }
               }}
             >
-              Continue with Google
+              {loading ? 'Signing in...' : 'Continue with Google'}
             </Button>
             
             <Box sx={{ width: '100%', display: 'flex', alignItems: 'center', my: 2 }}>
@@ -157,6 +180,7 @@ const Login = () => {
                 autoFocus
                 value={formData.email}
                 onChange={handleChange}
+                disabled={loading}
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     '& fieldset': {
@@ -179,6 +203,7 @@ const Login = () => {
                 autoComplete="current-password"
                 value={formData.password}
                 onChange={handleChange}
+                disabled={loading}
                 sx={{
                   '& .MuiOutlinedInput-root': {
                     '& fieldset': {
@@ -191,8 +216,8 @@ const Login = () => {
                 }}
               />
               <motion.div
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                whileHover={{ scale: loading ? 1 : 1.02 }}
+                whileTap={{ scale: loading ? 1 : 0.98 }}
               >
                 <Button
                   type="submit"
