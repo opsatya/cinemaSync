@@ -18,7 +18,6 @@ import { useAuth } from '../context/AuthContext';
 
 const Login = () => {
   const theme = useTheme();
-  // REMOVED: const navigate = useNavigate(); - No longer needed for manual navigation
   const { login, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
@@ -29,56 +28,70 @@ const Login = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    console.log(`📝 Input changed: ${name} = ${value}`); // LOG: Track input changes
     setFormData({ ...formData, [name]: value });
   };
 
-  // FIXED: Removed manual navigation to prevent redirect loops
   const handleGoogleLogin = async () => {
+    console.log('🎯 GOOGLE BUTTON CLICKED!'); // LOG: Confirm button click
     try {
       setLoading(true);
       setError('');
       console.log('🔍 Starting Google login...');
+      console.log('🔍 Auth context available:', { login: !!login, loginWithGoogle: !!loginWithGoogle });
       
-      await loginWithGoogle();
-      
-      // REMOVED: navigate('/') - Let PublicRoute component handle the redirect
-      // The auth state will change and route guards will redirect automatically
-      console.log('✅ Google login successful, waiting for redirect...');
+      const result = await loginWithGoogle();
+      console.log('✅ Google login completed, result:', result);
       
     } catch (err) {
-      console.error('❌ Google login error:', err);
+      console.error('❌ Google login error details:', {
+        message: err.message,
+        code: err.code,
+        stack: err.stack
+      });
+      
       if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not enabled in Firebase. Please enable it in Firebase Console > Authentication > Sign-in method.');
       } else {
         setError('Failed to sign in with Google: ' + err.message);
       }
     } finally {
+      console.log('🏁 Google login finally block');
       setLoading(false);
     }
   };
 
-  // FIXED: Removed manual navigation to prevent redirect loops
   const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log('🎯 FORM SUBMITTED!'); // LOG: Confirm form submission
+    console.log('📋 Form data:', formData); // LOG: Show form data
+    
+    // Validate form data
+    if (!formData.email || !formData.password) {
+      console.warn('⚠️ Missing email or password');
+      setError('Please fill in both email and password');
+      return;
+    }
     
     try {
       setError('');
       setLoading(true);
       console.log('🔐 Starting email login for:', formData.email);
+      console.log('🔍 Auth context available:', { login: !!login, loginWithGoogle: !!loginWithGoogle });
       
-      await login(formData.email, formData.password);
-      
-      // REMOVED: navigate('/') - Let PublicRoute component handle the redirect
-      // The auth state will change and route guards will redirect automatically
-      console.log('✅ Email login successful, waiting for redirect...');
+      const result = await login(formData.email, formData.password);
+      console.log('✅ Email login completed, result:', result);
       
     } catch (err) {
-      console.error('❌ Email login error:', err);
+      console.error('❌ Email login error details:', {
+        message: err.message,
+        code: err.code,
+        stack: err.stack
+      });
       
       // Handle specific error cases
       if (err.code === 'auth/user-not-found') {
         setError('No account found for this email. Please register to continue.');
-        // Keep manual navigation for error case only
         setTimeout(() => {
           window.location.href = '/register';
         }, 2000);
@@ -86,13 +99,24 @@ const Login = () => {
         setError('Incorrect password. Please try again.');
       } else if (err.code === 'auth/invalid-email') {
         setError('Please enter a valid email address.');
+      } else if (err.code === 'auth/too-many-requests') {
+        setError('Too many failed attempts. Please try again later.');
       } else {
         setError('Failed to log in: ' + (err.message || 'Unknown error'));
       }
     } finally {
+      console.log('🏁 Email login finally block');
       setLoading(false);
     }
   };
+
+  // LOG: Component render
+  console.log('🖼️ Login component rendered', { 
+    hasAuthContext: !!(login && loginWithGoogle),
+    formData,
+    loading,
+    error: error || 'none'
+  });
 
   return (
     <Container maxWidth="xs" sx={{
@@ -224,6 +248,7 @@ const Login = () => {
                   fullWidth
                   variant="contained"
                   disabled={loading}
+                  onClick={() => console.log('🎯 SUBMIT BUTTON CLICKED!')} // LOG: Additional click tracking
                   sx={{ 
                     mt: 3, 
                     mb: 2, 
