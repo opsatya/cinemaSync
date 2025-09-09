@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -38,6 +39,7 @@ import { motion } from 'framer-motion';
 import { fetchActiveRooms } from '../utils/api';
 
 const MyRooms = () => {
+  const { currentUser } = useAuth();
   const theme = useTheme();
   const navigate = useNavigate();
   const [tabValue, setTabValue] = useState(0);
@@ -53,7 +55,9 @@ const MyRooms = () => {
         setLoading(true);
         setError(null);
         const activeRooms = await fetchActiveRooms();
-        setRooms(activeRooms);
+        // If user logged in, only keep rooms where creator matches
+        const filtered = currentUser ? activeRooms.filter(r => r.creator_id === currentUser.uid) : activeRooms;
+        setRooms(filtered);
       } catch (err) {
         setError(err.message || 'Could not fetch rooms.');
       } finally {

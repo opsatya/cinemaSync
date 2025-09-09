@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
@@ -16,8 +16,14 @@ import { LockOutlined, Google } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 
+const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
+
 const Login = () => {
   const theme = useTheme();
+  const navigate = useNavigate();
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  const redirectTo = params.get('redirect') || '/';
   const { login, loginWithGoogle } = useAuth();
   const [formData, setFormData] = useState({
     email: '',
@@ -33,6 +39,8 @@ const Login = () => {
   };
 
   const handleGoogleLogin = async () => {
+    // Persist desired redirect so auth hook can restore later
+    sessionStorage.setItem(REDIRECT_STORAGE_KEY, redirectTo);
     console.log('🎯 GOOGLE BUTTON CLICKED!'); // LOG: Confirm button click
     try {
       setLoading(true);
@@ -80,6 +88,8 @@ const Login = () => {
       console.log('🔍 Auth context available:', { login: !!login, loginWithGoogle: !!loginWithGoogle });
       
       const result = await login(formData.email, formData.password);
+      // After successful email/password login, navigate to intended destination
+      navigate(redirectTo, { replace: true });
       console.log('✅ Email login completed, result:', result);
       
     } catch (err) {

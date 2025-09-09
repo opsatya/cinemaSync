@@ -110,7 +110,12 @@ export const useFirebaseAuth = () => {
   };
 
   // Login with Google - FIXED VERSION
+  // Before redirecting to Google, store intended redirect path (default to home)
+  const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
   const loginWithGoogle = async () => {
+    // Save the intended redirect path. You could enhance this to read the current
+    // location or a query param if you want more granular control.
+    sessionStorage.setItem(REDIRECT_STORAGE_KEY, window.location.pathname || '/');
     try {
       setError(null);
       console.log('🔍 [loginWithGoogle] Starting Google authentication...');
@@ -176,6 +181,11 @@ export const useFirebaseAuth = () => {
         const result = await getRedirectResult(auth);
         
         if (result && result.user) {
+          // Read the path we saved before redirect (defaults to "/")
+          const redirectPath = sessionStorage.getItem(REDIRECT_STORAGE_KEY) || '/';
+          sessionStorage.removeItem(REDIRECT_STORAGE_KEY);
+          // Navigate using full reload to ensure Router picks up new auth state
+          window.location.replace(redirectPath);
           console.log('🔄 [handleRedirectResult] Google redirect result received:', result.user.email);
           // The onAuthStateChanged will handle the token exchange automatically
         } else {

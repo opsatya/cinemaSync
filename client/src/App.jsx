@@ -43,7 +43,8 @@ const ProtectedRoute = ({ children }) => {
   // More lenient check - allow if either Firebase user OR backend token exists
   if (!currentUser && !backendToken) {
     console.log('🚫 Not authenticated, redirecting to login');
-    return <Navigate to="/login" replace />;
+    const from = window.location.pathname + window.location.search;
+    return <Navigate to={`/login?redirect=${encodeURIComponent(from)}`} replace />;
   }
   
   return children;
