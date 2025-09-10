@@ -229,6 +229,16 @@ class Room:
         return collection.find_one({'room_id': room_id})
     
     @staticmethod
+    def find_by_user_id(user_id):
+        """Find all active rooms a user is a participant in."""
+        collection = Room.get_collection()
+        cursor = collection.find({
+            'participants.user_id': user_id,
+            'is_active': True
+        }).sort('updated_at', -1)
+        return list(cursor)
+    
+    @staticmethod
     def add_participant(room_id, user_id):
         """Add a participant to a room"""
         collection = Room.get_collection()

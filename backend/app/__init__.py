@@ -1,8 +1,21 @@
 from flask import Flask, jsonify, redirect
+from flask.json.provider import JSONProvider
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 from app.models import init_db
+from .firebase_admin import init_firebase
+from bson import ObjectId
+from datetime import datetime
+
+class MongoJSONProvider(JSONProvider):
+    """A JSON provider that can handle MongoDB's ObjectId and datetime."""
+    def default(self, o):
+        if isinstance(o, ObjectId):
+            return str(o)
+        if isinstance(o, datetime):
+            return o.isoformat()
+        return super().default(o)
 
 load_dotenv()
 
@@ -17,6 +30,10 @@ def create_app():
     
     # Initialize database connection
     init_db()
+    init_firebase()
+    
+    # Use a custom JSON provider to handle MongoDB ObjectId and datetime
+    app.json = MongoJSONProvider(app)
     
     # Do not force Content-Type globally; Flask sets appropriate mimetypes
     

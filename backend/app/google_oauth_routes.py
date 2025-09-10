@@ -16,11 +16,13 @@ GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
 GOOGLE_PROJECT_ID = os.getenv('GOOGLE_PROJECT_ID') # e.g., 'cinemasync'
 GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI')
 
+# Use standard OpenID Connect scopes for email and profile, plus the Drive scope.
+# This is a more modern and less ambiguous way to request user information.
 SCOPES = [
+    'openid',
+    'email',
+    'profile',
     'https://www.googleapis.com/auth/drive.file',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'openid'
 ]
 
 def _build_flow():
@@ -149,12 +151,22 @@ def health():
     'Connect Google Drive' or Drive UI elements.
     """
     try:
-        required_vars = {
+        # Check for OAuth client config (for user connections)
+        oauth_vars = {
             'GOOGLE_CLIENT_ID': bool(GOOGLE_CLIENT_ID),
             'GOOGLE_CLIENT_SECRET': bool(GOOGLE_CLIENT_SECRET),
             'GOOGLE_PROJECT_ID': bool(GOOGLE_PROJECT_ID),
             'GOOGLE_REDIRECT_URI': bool(GOOGLE_REDIRECT_URI),
         }
+
+        # Check for Service Account config (for browsing shared content)
+        service_account_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+        service_account_vars = {
+            'GOOGLE_APPLICATION_CREDENTIALS': bool(service_account_path and os.path.exists(service_account_path))
+        }
+
+        required_vars = {**oauth_vars, **service_account_vars}
+
         env_ok = all(required_vars.values())
         return jsonify({
             'success': True,

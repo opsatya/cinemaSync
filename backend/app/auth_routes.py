@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 import os
 import jwt
 from datetime import datetime, timedelta
+from .firebase_admin import verify_firebase_token
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -11,25 +12,29 @@ JWT_EXPIRES_MIN = int(os.getenv('JWT_EXPIRES_MIN', '4320'))  # default 3 days
 @auth_bp.route('/exchange', methods=['POST'])
 def exchange_token():
     """
-    Issue a backend JWT for the provided user identity. In production, verify
-    a real identity token (e.g., Firebase ID token) before issuing.
-    Expected JSON: { "user_id": "<uid>", "name": "optional", "email": "optional" }
+    Issue a backend JWT for a verified Firebase user.
+    The Firebase ID token must be passed in the Authorization header.
     """
     try:
-        data = request.get_json() or {}
-        user_id = data.get('user_id')
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'success': False, 'message': 'Firebase ID token is missing or invalid'}), 401
+        
+        id_token = auth_header.split(' ')[1]
+        decoded_token = verify_firebase_token(id_token)
 
+        if not decoded_token:
+            return jsonify({'success': False, 'message': 'Invalid Firebase ID token'}), 401
+
+        user_id = decoded_token.get('uid')
         if not user_id:
-            return jsonify({
-                'success': False,
-                'message': 'user_id is required'
-            }), 400
+            return jsonify({'success': False, 'message': 'Token is invalid (missing uid)'}), 401
 
         now = datetime.utcnow()
         payload = {
             'user_id': user_id,
-            'name': data.get('name'),
-            'email': data.get('email'),
+            'name': decoded_token.get('name'),
+            'email': decoded_token.get('email'),
             'iat': now,
             'exp': now + timedelta(minutes=JWT_EXPIRES_MIN)
         }
@@ -45,5 +50,3 @@ def exchange_token():
             'success': False,
             'message': str(e)
         }), 500
-
-

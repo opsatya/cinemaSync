@@ -36,10 +36,10 @@ import {
   FavoriteBorder,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
-import { fetchActiveRooms } from '../utils/api';
+import { fetchMyRooms } from '../utils/api';
 
 const MyRooms = () => {
-  const { currentUser } = useAuth();
+  const { backendToken } = useAuth();
   const theme = useTheme();
   const navigate = useNavigate();
   const [tabValue, setTabValue] = useState(0);
@@ -51,22 +51,24 @@ const MyRooms = () => {
 
   useEffect(() => {
     const loadRooms = async () => {
+      if (!backendToken) {
+        setError('You must be logged in to see your rooms.');
+        setLoading(false);
+        return;
+      }
       try {
         setLoading(true);
         setError(null);
-        const activeRooms = await fetchActiveRooms();
-        // If user logged in, only keep rooms where creator matches
-        const filtered = currentUser ? activeRooms.filter(r => r.creator_id === currentUser.uid) : activeRooms;
-        setRooms(filtered);
+        const myRooms = await fetchMyRooms(backendToken);
+        setRooms(myRooms);
       } catch (err) {
         setError(err.message || 'Could not fetch rooms.');
       } finally {
         setLoading(false);
       }
     };
-    
     loadRooms();
-  }, []);
+  }, [backendToken]);
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -226,10 +228,10 @@ const MyRooms = () => {
               filteredRooms.length === 0 ? (
                 <Box sx={{ textAlign: 'center', py: 5 }}>
                   <Typography variant="h6" color="text.secondary" gutterBottom>
-                    No rooms found
+                    {tabValue === 0 ? 'You have not joined any rooms yet.' : 'No rooms found in this category.'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {searchQuery ? 'Try a different search term' : 'There are no public rooms currently, why not create one?'}
+                    {searchQuery ? 'Try a different search term.' : 'Why not create a new room?'}
                   </Typography>
                 </Box>
               ) : (

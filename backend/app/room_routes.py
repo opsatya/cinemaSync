@@ -127,6 +127,34 @@ def get_room(room_id):
             'message': f'Failed to get room details: {str(e)}'
         }), 500
 
+@room_bp.route('/my-rooms', methods=['GET'])
+@token_required
+def get_my_rooms():
+    """Get list of rooms the current user is part of."""
+    try:
+        user_id = g.current_user_id
+        
+        rooms = Room.find_by_user_id(user_id)
+        
+        # Remove sensitive data
+        for room in rooms:
+            if '_id' in room:
+                del room['_id']
+            if 'password' in room:
+                room['password_required'] = room['password'] is not None
+                del room['password']
+        
+        return jsonify({
+            'success': True,
+            'rooms': rooms,
+            'count': len(rooms)
+        }), 200
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'message': f'Failed to fetch user rooms: {str(e)}'
+        }), 500
+
 @room_bp.route('/<room_id>/join', methods=['POST'])
 @token_required  # USE THE IMPORTED MIDDLEWARE
 def join_room(room_id):

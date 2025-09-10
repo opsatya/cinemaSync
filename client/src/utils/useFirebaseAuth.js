@@ -47,8 +47,8 @@ export const useFirebaseAuth = () => {
 
       console.log('📤 [exchangeForBackendToken] Sending identity to backend for exchange:', identity);
 
-      // Send identity to backend (don't send Firebase token - your backend doesn't use it)
-      const token = await exchangeToken(identity);
+      // Send identity and Firebase ID token to backend for verification
+      const token = await exchangeToken(identity, idToken);
 
       // Save backend token in state + localStorage
       setBackendToken(token);

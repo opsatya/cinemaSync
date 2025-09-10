@@ -238,19 +238,22 @@ export const exchangeToken = async (identity, idToken) => {
 
 
 /**
- * Fetch active public rooms
+ * Fetch rooms the current user is a part of.
+ * @param {string} token - The user's backend JWT
  * @returns {Promise<Array>}
  */
-export const fetchActiveRooms = async () => {
+export const fetchMyRooms = async (token) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/rooms/`);
+    const response = await fetch(`${API_BASE_URL}/rooms/my-rooms`, {
+      headers: getAuthHeaders(token),
+    });
     const data = await response.json();
     if (!data.success) {
       throw new Error(data.message || 'Failed to fetch rooms');
     }
     return data.rooms;
   } catch (error) {
-    if (DEBUG) console.error('Error fetching active rooms:', error);
+    if (DEBUG) console.error('Error fetching my rooms:', error);
     throw error;
   }
 };
@@ -306,7 +309,7 @@ export default {
   getRecentMovies,
   getDirectStreamUrl,
   exchangeToken,
-  fetchActiveRooms,
+  fetchMyRooms,
   createRoom,
   getRoomDetails,
 };
