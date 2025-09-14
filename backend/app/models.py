@@ -2,10 +2,63 @@ from pymongo import MongoClient
 import os
 import uuid
 from datetime import datetime
+import json
 
 # MongoDB connection
 client = None
 db = None
+
+def json_serial(obj):
+    """JSON serializer for objects not serializable by default json code"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+def serialize_document(doc):
+    """Convert MongoDB document to JSON-serializable format"""
+    if not doc:
+        return None
+    
+    # Create a copy to avoid modifying original data
+    serialized = {}
+    
+    for key, value in doc.items():
+        if key == '_id':
+            # Skip MongoDB's _id field or convert to string if needed
+            continue
+        elif isinstance(value, datetime):
+            # Convert datetime to ISO string
+            serialized[key] = value.isoformat()
+        elif isinstance(value, list):
+            # Handle lists that might contain datetime objects
+            serialized[key] = []
+            for item in value:
+                if isinstance(item, dict):
+                    # Serialize nested dictionaries
+                    serialized_item = {}
+                    for k, v in item.items():
+                        if isinstance(v, datetime):
+                            serialized_item[k] = v.isoformat()
+                        else:
+                            serialized_item[k] = v
+                    serialized[key].append(serialized_item)
+                elif isinstance(item, datetime):
+                    serialized[key].append(item.isoformat())
+                else:
+                    serialized[key].append(item)
+        elif isinstance(value, dict):
+            # Handle nested dictionaries
+            serialized_dict = {}
+            for k, v in value.items():
+                if isinstance(v, datetime):
+                    serialized_dict[k] = v.isoformat()
+                else:
+                    serialized_dict[k] = v
+            serialized[key] = serialized_dict
+        else:
+            serialized[key] = value
+    
+    return serialized
 
 def init_db():
     """Initialize MongoDB connection"""
@@ -38,14 +91,15 @@ class MovieMetadata:
     def find_by_file_id(file_id):
         """Find movie metadata by Google Drive file ID"""
         collection = MovieMetadata.get_collection()
-        return collection.find_one({'file_id': file_id})
+        doc = collection.find_one({'file_id': file_id})
+        return serialize_document(doc)
     
     @staticmethod
     def find_by_parent_folder(folder_id, limit=100, skip=0):
         """Find all movie metadata in a specific folder"""
         collection = MovieMetadata.get_collection()
         cursor = collection.find({'parent_folder_id': folder_id}).skip(skip).limit(limit)
-        return list(cursor)
+        return [serialize_document(doc) for doc in cursor]
     
     @staticmethod
     def search_movies(query, limit=20):
@@ -66,7 +120,7 @@ class MovieMetadata:
             {'score': {'$meta': 'textScore'}}
         ).sort([('score', {'$meta': 'textScore'})]).limit(limit)
         
-        return list(cursor)
+        return [serialize_document(doc) for doc in cursor]
     
     @staticmethod
     def save_metadata(metadata):
@@ -113,7 +167,7 @@ class MovieMetadata:
         """Get recently accessed movies"""
         collection = MovieMetadata.get_collection()
         cursor = collection.find({'type': 'video'}).sort('updated_at', -1).limit(limit)
-        return list(cursor)
+        return [serialize_document(doc) for doc in cursor]
 
 # OAuth tokens per user for Google Drive access
 class UserToken:
@@ -153,7 +207,8 @@ class UserToken:
     def get_tokens(user_id, provider):
         """Fetch tokens for a user/provider"""
         collection = UserToken.get_collection()
-        return collection.find_one({'user_id': user_id, 'provider': provider})
+        doc = collection.find_one({'user_id': user_id, 'provider': provider})
+        return serialize_document(doc)
 
     @staticmethod
     def delete_tokens(user_id, provider):
@@ -218,7 +273,8 @@ class Room:
         result = collection.insert_one(room_data)
         
         if result.inserted_id:
-            return room_data
+            # Return serialized version
+            return serialize_document(room_data)
         else:
             raise Exception("Failed to create room")
     
@@ -226,7 +282,8 @@ class Room:
     def find_by_id(room_id):
         """Find room by ID"""
         collection = Room.get_collection()
-        return collection.find_one({'room_id': room_id})
+        doc = collection.find_one({'room_id': room_id})
+        return serialize_document(doc)
     
     @staticmethod
     def find_by_user_id(user_id):
@@ -236,24 +293,24 @@ class Room:
             'participants.user_id': user_id,
             'is_active': True
         }).sort('updated_at', -1)
-        return list(cursor)
+        return [serialize_document(doc) for doc in cursor]
     
     @staticmethod
     def add_participant(room_id, user_id):
         """Add a participant to a room"""
         collection = Room.get_collection()
-        room = Room.find_by_id(room_id)
+        room_doc = collection.find_one({'room_id': room_id})
         
-        if not room:
+        if not room_doc:
             raise ValueError("Room not found")
             
         # Check if user is already in the room
-        for participant in room['participants']:
+        for participant in room_doc['participants']:
             if participant['user_id'] == user_id:
-                return room
+                return serialize_document(room_doc)
                 
         # Check if room is full
-        if len(room['participants']) >= room['max_participants']:
+        if len(room_doc['participants']) >= room_doc['max_participants']:
             raise ValueError("Room is full")
             
         # Add participant
@@ -272,9 +329,9 @@ class Room:
     def remove_participant(room_id, user_id):
         """Remove a participant from a room"""
         collection = Room.get_collection()
-        room = Room.find_by_id(room_id)
+        room_doc = collection.find_one({'room_id': room_id})
         
-        if not room:
+        if not room_doc:
             raise ValueError("Room not found")
             
         # Remove participant
@@ -284,22 +341,22 @@ class Room:
         )
         
         # If room is empty, deactivate it
-        updated_room = Room.find_by_id(room_id)
-        if len(updated_room['participants']) == 0:
+        updated_room_doc = collection.find_one({'room_id': room_id})
+        if len(updated_room_doc['participants']) == 0:
             Room.deactivate_room(room_id)
             
-        return updated_room
+        return Room.find_by_id(room_id)
     
     @staticmethod
     def update_playback_state(room_id, playback_state):
         """Update room playback state"""
         collection = Room.get_collection()
-        room = Room.find_by_id(room_id)
+        room_doc = collection.find_one({'room_id': room_id})
         
-        if not room:
+        if not room_doc:
             raise ValueError("Room not found")
             
-        # Update playback state
+        # Update playback state with datetime
         playback_state['last_updated'] = datetime.utcnow()
         
         collection.update_one(
@@ -316,9 +373,9 @@ class Room:
     def deactivate_room(room_id):
         """Deactivate a room"""
         collection = Room.get_collection()
-        room = Room.find_by_id(room_id)
+        room_doc = collection.find_one({'room_id': room_id})
         
-        if not room:
+        if not room_doc:
             raise ValueError("Room not found")
             
         collection.update_one(
@@ -340,4 +397,4 @@ class Room:
         # Sort by creation date (newest first) and apply pagination
         cursor = cursor.sort('created_at', -1).skip(skip).limit(limit)
         
-        return list(cursor)
+        return [serialize_document(doc) for doc in cursor]

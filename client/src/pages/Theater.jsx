@@ -108,6 +108,11 @@ const Theater = () => {
         setRoom(roomDetails);
         setUsers(roomDetails.participants || []);
         setIsHost(checkIfHost(roomDetails, currentUser?.uid));
+
+        // Debug log for host detection
+        console.log('[DEBUG] currentUser.uid:', currentUser?.uid);
+        console.log('[DEBUG] room.host_id:', roomDetails?.host_id);
+        console.log('[DEBUG] isHost:', checkIfHost(roomDetails, currentUser?.uid));
         
         if (roomDetails.movie_source && roomDetails.movie_source.type === 'googleDrive' && roomDetails.movie_source.value) {
           setSelectedMovie({ id: roomDetails.movie_source.value, name: 'Movie' });
@@ -355,11 +360,17 @@ const Theater = () => {
     setIsPlaying(newPlayState);
     
     // Send to server
+    console.log('[DEBUG] Emitting update_playback:', {
+      room_id: roomId,
+      user_id: currentUser.uid,
+      isHost,
+      playback_state: { is_playing: !isPlaying, current_time: currentTime }
+    });
     socket.emit('update_playback', {
       room_id: roomId,
       user_id: currentUser.uid,
       playback_state: { 
-        is_playing: newPlayState, 
+        is_playing: !isPlaying, 
         current_time: currentTime 
       },
     });
