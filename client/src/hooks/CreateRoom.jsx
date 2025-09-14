@@ -28,8 +28,6 @@ const CreateRoom = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const { backendToken } = useAuth();
-  // DEBUG: Checkpoint 3 - Log the backendToken value from context
-  console.log('🔑 [CreateRoom] Backend token from context:', backendToken);
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);

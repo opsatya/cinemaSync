@@ -4,6 +4,7 @@ from app.models import MovieMetadata
 from app.room_routes import token_required
 import io
 import os
+from datetime import datetime
 from googleapiclient.http import MediaIoBaseDownload
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -17,6 +18,25 @@ def index():
         'message': 'CinemaSync API is running',
         'version': '1.0.0'
     })
+
+@api_bp.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for debugging connectivity"""
+    import json
+    from flask import Response
+    
+    data = {
+        'success': True,
+        'message': 'Backend is healthy and reachable',
+        'status': 'ok',
+        'timestamp': str(datetime.utcnow())
+    }
+    
+    return Response(
+        json.dumps(data),
+        mimetype='application/json',
+        status=200
+    )
 
 @api_bp.route('/movies/list', methods=['GET'])
 def get_movies_list():

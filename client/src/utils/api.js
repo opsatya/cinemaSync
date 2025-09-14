@@ -2,9 +2,6 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
 const DEBUG = import.meta.env.VITE_DEBUG_LOGS === 'true';
 
-// DEBUG: Verify environment variable is loaded correctly
-if (DEBUG) console.log('🔍 API_BASE_URL:', API_BASE_URL);
-
 // Helper to create authenticated headers
 const getAuthHeaders = (token) => {
   return {
@@ -193,14 +190,32 @@ export const getDirectStreamUrl = (fileId) => {
 };
 
 /**
+ * Test network connectivity to the backend
+ * @returns {Promise<boolean>} - Whether the backend is reachable
+ */
+export const testBackendConnectivity = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL.replace('/api', '')}/health`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    return response.ok;
+  } catch (error) {
+    if (DEBUG) console.error('Backend connectivity test failed:', error);
+    return false;
+  }
+};
+
+/**
  * Exchange a user identity for a backend JWT.
  * @param {object} identity - User identity object { user_id, name, email }
+ * @param {string} idToken - Firebase ID token
  * @returns {Promise<string>} - The backend JWT.
  */
 export const exchangeToken = async (identity, idToken) => {
-  // DEBUG: Checkpoint 2 - Log request payload
-  if (DEBUG) console.log('🚀 [exchangeToken] Exchanging token for identity:', identity);
-
   try {
     const response = await fetch(`${API_BASE_URL}/auth/exchange`, {
       method: 'POST',
@@ -211,13 +226,9 @@ export const exchangeToken = async (identity, idToken) => {
       body: JSON.stringify(identity),
     });
 
-    // DEBUG: Log raw response
-    if (DEBUG) console.log('📬 [exchangeToken] Raw response from backend:', response);
-
     if (!response.ok) {
       const errorBody = await response.text();
-      if (DEBUG) console.error('❌ [exchangeToken] Backend error response:', errorBody);
-      throw new Error(`Failed to exchange token: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to exchange token: ${response.status} ${response.statusText} - ${errorBody}`);
     }
 
     const data = await response.json();
@@ -225,9 +236,6 @@ export const exchangeToken = async (identity, idToken) => {
     if (!data.token) {
       throw new Error(data.message || 'Backend did not return a token');
     }
-
-    // DEBUG: Log successful token
-    if (DEBUG) console.log('✅ [exchangeToken] Successfully received backend token.');
 
     return data.token;
   } catch (error) {

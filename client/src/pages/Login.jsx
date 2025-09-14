@@ -16,8 +16,6 @@ import { LockOutlined, Google } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 
-const REDIRECT_STORAGE_KEY = 'redirectAfterLogin';
-
 const Login = () => {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -34,49 +32,29 @@ const Login = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    console.log(`📝 Input changed: ${name} = ${value}`); // LOG: Track input changes
     setFormData({ ...formData, [name]: value });
   };
 
   const handleGoogleLogin = async () => {
-    // Persist desired redirect so auth hook can restore later
-    sessionStorage.setItem(REDIRECT_STORAGE_KEY, redirectTo);
-    console.log('🎯 GOOGLE BUTTON CLICKED!'); // LOG: Confirm button click
     try {
       setLoading(true);
       setError('');
-      console.log('🔍 Starting Google login...');
-      console.log('🔍 Auth context available:', { login: !!login, loginWithGoogle: !!loginWithGoogle });
-      
-      const result = await loginWithGoogle();
-      console.log('✅ Google login completed, result:', result);
-      
+      await loginWithGoogle();
     } catch (err) {
-      console.error('❌ Google login error details:', {
-        message: err.message,
-        code: err.code,
-        stack: err.stack
-      });
-      
       if (err.code === 'auth/operation-not-allowed') {
         setError('Google sign-in is not enabled in Firebase. Please enable it in Firebase Console > Authentication > Sign-in method.');
       } else {
         setError('Failed to sign in with Google: ' + err.message);
       }
     } finally {
-      console.log('🏁 Google login finally block');
       setLoading(false);
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log('🎯 FORM SUBMITTED!'); // LOG: Confirm form submission
-    console.log('📋 Form data:', formData); // LOG: Show form data
     
-    // Validate form data
     if (!formData.email || !formData.password) {
-      console.warn('⚠️ Missing email or password');
       setError('Please fill in both email and password');
       return;
     }
@@ -84,22 +62,9 @@ const Login = () => {
     try {
       setError('');
       setLoading(true);
-      console.log('🔐 Starting email login for:', formData.email);
-      console.log('🔍 Auth context available:', { login: !!login, loginWithGoogle: !!loginWithGoogle });
-      
-      const result = await login(formData.email, formData.password);
-      // After successful email/password login, navigate to intended destination
+      await login(formData.email, formData.password);
       navigate(redirectTo, { replace: true });
-      console.log('✅ Email login completed, result:', result);
-      
     } catch (err) {
-      console.error('❌ Email login error details:', {
-        message: err.message,
-        code: err.code,
-        stack: err.stack
-      });
-      
-      // Handle specific error cases
       if (err.code === 'auth/user-not-found') {
         setError('No account found for this email. Please register to continue.');
         setTimeout(() => {
@@ -115,18 +80,10 @@ const Login = () => {
         setError('Failed to log in: ' + (err.message || 'Unknown error'));
       }
     } finally {
-      console.log('🏁 Email login finally block');
       setLoading(false);
     }
   };
 
-  // LOG: Component render
-  console.log('🖼️ Login component rendered', { 
-    hasAuthContext: !!(login && loginWithGoogle),
-    formData,
-    loading,
-    error: error || 'none'
-  });
 
   return (
     <Container maxWidth="xs" sx={{
@@ -258,7 +215,6 @@ const Login = () => {
                   fullWidth
                   variant="contained"
                   disabled={loading}
-                  onClick={() => console.log('🎯 SUBMIT BUTTON CLICKED!')} // LOG: Additional click tracking
                   sx={{ 
                     mt: 3, 
                     mb: 2, 

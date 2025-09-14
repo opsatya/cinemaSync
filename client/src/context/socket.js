@@ -13,8 +13,6 @@ if (!SOCKET_URL) {
 }
 if (!SOCKET_URL) SOCKET_URL = 'http://127.0.0.1:5000';
 
-// DEBUG: show socket URL and options
-console.log(' SOCKET_URL:', SOCKET_URL);
 
 export const socket = io(SOCKET_URL, {
   autoConnect: false, // Don't connect automatically

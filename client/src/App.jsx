@@ -15,15 +15,10 @@ import MyRooms from './pages/MyRooms';
 // Layout components
 import MainLayout from './components/layout/MainLayout';
 
+
 // Protected Route component - for authenticated users only
 const ProtectedRoute = ({ children }) => {
   const { currentUser, backendToken, loading } = useAuth();
-  
-  console.log('🛡️ ProtectedRoute check:', { 
-    hasCurrentUser: !!currentUser, 
-    hasBackendToken: !!backendToken, 
-    loading 
-  });
   
   if (loading) {
     return (
@@ -42,7 +37,6 @@ const ProtectedRoute = ({ children }) => {
   
   // More lenient check - allow if either Firebase user OR backend token exists
   if (!currentUser && !backendToken) {
-    console.log('🚫 Not authenticated, redirecting to login');
     const from = window.location.pathname + window.location.search;
     return <Navigate to={`/login?redirect=${encodeURIComponent(from)}`} replace />;
   }
@@ -53,12 +47,6 @@ const ProtectedRoute = ({ children }) => {
 // Public Route component - for unauthenticated users only
 const PublicRoute = ({ children }) => {
   const { currentUser, backendToken, loading } = useAuth();
-  
-  console.log('🌐 PublicRoute check:', { 
-    hasCurrentUser: !!currentUser, 
-    hasBackendToken: !!backendToken, 
-    loading 
-  });
   
   if (loading) {
     return (
@@ -77,7 +65,6 @@ const PublicRoute = ({ children }) => {
   
   // If already authenticated, redirect to home instead of showing login/register
   if (currentUser || backendToken) {
-    console.log('✅ Already authenticated, redirecting to home');
     return <Navigate to="/" replace />;
   }
   

@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Box,
   Button,
-  Grid,
   Typography,
   Card,
   CardContent,
@@ -11,6 +10,7 @@ import {
   TextField,
   useTheme,
 } from '@mui/material';
+import Grid from '@mui/material/Unstable_Grid2';
 import { PlayArrow, Add, Group, Movie } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 
@@ -230,7 +230,7 @@ const Home = () => {
       >
         <Grid container spacing={4}>
           {features.map((feature, index) => (
-            <Grid item xs={12} md={4} key={index}>
+            <Grid xs={12} md={4} key={index}>
               <motion.div variants={itemVariants}>
                 <Card
                   sx={{

@@ -10,12 +10,18 @@ from datetime import datetime
 
 class MongoJSONProvider(JSONProvider):
     """A JSON provider that can handle MongoDB's ObjectId and datetime."""
-    def default(self, o):
+    def dumps(self, obj, **kwargs):
+        """Serialize data as JSON."""
+        import json
+        return json.dumps(obj, default=self._json_serializer, **kwargs)
+    
+    def _json_serializer(self, o):
+        """Custom JSON serializer for MongoDB types."""
         if isinstance(o, ObjectId):
             return str(o)
         if isinstance(o, datetime):
             return o.isoformat()
-        return super().default(o)
+        raise TypeError(f"Object of type {type(o)} is not JSON serializable")
 
 load_dotenv()
 
