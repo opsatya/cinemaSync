@@ -138,7 +138,8 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
             playsInline
             onError={handleVideoError}
           >
-            <source src={streamUrl} type="video/mp4" />
+            {/* Let the browser infer MIME type to support various formats */}
+            <source src={streamUrl} />
             Your browser does not support the video tag.
           </video>
         </>

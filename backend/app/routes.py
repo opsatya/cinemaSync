@@ -120,30 +120,33 @@ def stream_file(file_id):
             file_metadata = drive_service.get_file_metadata(file_id)
             request_stream = drive_service.service.files().get_media(fileId=file_id)
         
-        # Create a request to download the file
-        request = request_stream
-        
-        # Create a BytesIO object to store the file content
-        file_content = io.BytesIO()
-        downloader = MediaIoBaseDownload(file_content, request)
-        
-        # Download the file
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        
-        # Reset the file pointer to the beginning
-        file_content.seek(0)
-        
-        # Create a response with the file content
+        # Stream the file in chunks instead of loading it entirely into memory
+        from flask import stream_with_context
+
+        CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
+
+        def generate():
+            """Generator that yields chunks from Google Drive."""
+            buffer = io.BytesIO()
+            downloader = MediaIoBaseDownload(buffer, request_stream, chunksize=CHUNK_SIZE)
+            done = False
+            while not done:
+                status, done = downloader.next_chunk()
+                buffer.seek(0)
+                data = buffer.read()
+                if data:
+                    yield data
+                buffer.seek(0)
+                buffer.truncate(0)
+
         response = Response(
-            file_content.read(),
+            stream_with_context(generate()),
             mimetype=file_metadata.get('mimeType', 'video/mp4')
         )
-        
-        # Set headers for streaming
-        response.headers.set('Content-Disposition', f'inline; filename="{file_metadata.get("name", "video.mp4")}"')
+
+        # Indicate support for simple range requests (client can still seek within the video)
         response.headers.set('Accept-Ranges', 'bytes')
+        response.headers.set('Content-Disposition', f'inline; filename="{file_metadata.get('name', 'video.mp4')}"')
         
         # Save metadata to MongoDB if available
         try:

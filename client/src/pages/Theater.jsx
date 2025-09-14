@@ -67,7 +67,11 @@ const Theater = () => {
   const [reaction, setReaction] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [joined, setJoined] = useState(false);
+  
+  // FIXED: Better joining state management
+  const [roomJoinStatus, setRoomJoinStatus] = useState('initial'); // 'initial', 'joining', 'joined', 'failed'
+  const [isHost, setIsHost] = useState(false);
+  
   // Private room join state
   const [passwordInput, setPasswordInput] = useState('');
   const passwordRef = useRef('');
@@ -80,30 +84,51 @@ const Theater = () => {
   // Movie selection state
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [showMovieBrowser, setShowMovieBrowser] = useState(false);
+
+  // FIXED: Helper to check if user can control playback (now includes host check)
+  const canControlPlayback = useCallback(() => {
+    return roomJoinStatus === 'joined' && currentUser && selectedMovie && isHost;
+  }, [roomJoinStatus, currentUser, selectedMovie, isHost]);
+
+  // FIXED: Helper to check if user is host
+  const checkIfHost = useCallback((roomData, userId) => {
+    return roomData?.host_id === userId;
+  }, []);
   
   // Fetch room details on mount
   useEffect(() => {
     const fetchRoom = async () => {
       try {
         setLoading(true);
+        console.log('🏠 [Theater] Fetching room details for:', roomId);
+        
         const roomDetails = await getRoomDetails(roomId);
+        console.log('🏠 [Theater] Room details loaded:', roomDetails);
+        
         setRoom(roomDetails);
         setUsers(roomDetails.participants || []);
+        setIsHost(checkIfHost(roomDetails, currentUser?.uid));
+        
         if (roomDetails.movie_source && roomDetails.movie_source.type === 'googleDrive' && roomDetails.movie_source.value) {
           setSelectedMovie({ id: roomDetails.movie_source.value, name: 'Movie' });
         }
-        // If room is private, show password dialog until joined
-        if ((roomDetails.is_private || roomDetails.password) && !joined) {
+        
+        // Check if room requires password
+        if ((roomDetails.is_private || roomDetails.password) && roomJoinStatus !== 'joined') {
           setShowPasswordDialog(true);
         }
       } catch (err) {
+        console.error('❌ [Theater] Failed to fetch room details:', err);
         setError(err.message || 'Could not load room.');
       } finally {
         setLoading(false);
       }
     };
-    fetchRoom();
-  }, [roomId, joined]);
+    
+    if (roomId && currentUser) {
+      fetchRoom();
+    }
+  }, [roomId, currentUser?.uid, checkIfHost]);
 
   const showReactionBubble = useCallback((emoji) => {
     setReaction(emoji);
@@ -111,26 +136,40 @@ const Theater = () => {
     setTimeout(() => setShowReaction(false), 2000);
   }, []);
 
-  // Helper to attempt join when ready
+  // FIXED: Better join attempt logic
   const attemptJoin = useCallback(() => {
-    if (!socket.connected || !room || !currentUser) return;
-    if (joined || joinInProgress.current) {
+    if (!socket.connected || !room || !currentUser) {
+      console.log('⏸️ [Theater] Cannot join: missing requirements', {
+        connected: socket.connected,
+        hasRoom: !!room,
+        hasUser: !!currentUser
+      });
       return;
     }
+    
+    if (roomJoinStatus === 'joined' || joinInProgress.current) {
+      console.log('⏸️ [Theater] Already joined or joining in progress');
+      return;
+    }
+
     const payload = { room_id: roomId, user_id: currentUser.uid };
     const enteredPassword = (passwordRef.current || '').trim();
-    const requiresPassword = Boolean(room?.is_private) || enteredPassword.length > 0;
+    const requiresPassword = Boolean(room?.is_private) || Boolean(room?.password) || enteredPassword.length > 0;
+    
     if (requiresPassword) {
       if (!enteredPassword) {
+        console.log('🔒 [Theater] Password required, showing dialog');
         setShowPasswordDialog(true);
         return;
       }
       payload.password = enteredPassword;
     }
-    console.log('📡 [Socket] Emitting join_room with payload:', { ...payload, password: payload.password ? '***' : undefined });
+    
+    console.log('📡 [Theater] Attempting to join room:', { ...payload, password: payload.password ? '***' : undefined });
+    setRoomJoinStatus('joining');
     joinInProgress.current = true;
     socket.emit('join_room', payload);
-  }, [room, currentUser, roomId, joined]);
+  }, [room, currentUser, roomId]);
 
   // Socket.IO connection and event handling
   useEffect(() => {
@@ -142,40 +181,85 @@ const Theater = () => {
       console.log('🔐 [Socket] Auth token attached for connection.');
     }
 
-    // Register listeners BEFORE connecting to avoid race conditions
-    // Avoid duplicate listener registration across renders
-    const engine = socket.io?.engine;
+    // FIXED: Enhanced event handlers with better state management
     const onConnect = () => {
       console.log('🔌 [Socket] Connected. Will attempt room join...');
-      setError(null); // clear any previous connection errors
+      setError(null);
       if (connectErrorTimer.current) {
         clearTimeout(connectErrorTimer.current);
         connectErrorTimer.current = null;
       }
       attemptJoin();
     };
-    const onConnectionResponse = (data) => {
-      console.log('🔭 [Socket] connection_response:', data);
-    };
-    const onUserJoined = (data) => setUsers(data.participants);
-    const onUserLeft = (data) => setUsers(data.participants);
+
     const onRoomJoined = (data) => {
-      console.log('✅ [Socket] Room joined');
+      console.log('✅ [Socket] Room joined successfully:', data);
       setJoinError('');
       setShowPasswordDialog(false);
       setRoom(data.room);
       setUsers(data.room.participants);
       setIsPlaying(data.room.playback_state.is_playing);
-      setJoined(true);
+      setCurrentTime(data.room.playback_state.current_time || 0);
+      setIsHost(checkIfHost(data.room, currentUser?.uid));
+      
+      // FIXED: Update join status
+      setRoomJoinStatus('joined');
       joinInProgress.current = false;
+      
+      console.log('🎭 [Theater] User role:', {
+        isHost: checkIfHost(data.room, currentUser?.uid),
+        canControl: checkIfHost(data.room, currentUser?.uid)
+      });
     };
-    const onPlaybackUpdated = (data) => setIsPlaying(data.playback_state.is_playing);
-    const onNewChat = (msg) => setMessages((prev) => [...prev, msg]);
-    const onNewReaction = (data) => showReactionBubble(data.reaction);
+
+    const onUserJoined = (data) => {
+      console.log('👤 [Socket] User joined:', data);
+      setUsers(data.participants);
+    };
+
+    const onUserLeft = (data) => {
+      console.log('👋 [Socket] User left:', data);
+      setUsers(data.participants);
+    };
+
+    const onPlaybackUpdated = (data) => {
+      console.log('▶️ [Socket] Playback updated:', data.playback_state);
+      setIsPlaying(data.playback_state.is_playing);
+      setCurrentTime(data.playback_state.current_time || 0);
+    };
+
+    const onNewChat = (msg) => {
+      console.log('💬 [Socket] New chat message:', msg);
+      setMessages((prev) => [...prev, msg]);
+    };
+
+    const onNewReaction = (data) => {
+      console.log('😀 [Socket] New reaction:', data);
+      showReactionBubble(data.reaction);
+    };
+
+    // FIXED: Enhanced error handling
+    const onServerError = (err) => {
+      const msg = err?.message || 'Unknown server error';
+      console.error('❌ [Socket] Server error:', msg);
+      
+      if (/not in room/i.test(msg)) {
+        console.warn('🔄 [Socket] User not in room, resetting join status');
+        setRoomJoinStatus('failed');
+        joinInProgress.current = false;
+        setError('You need to join the room first. Please refresh the page.');
+      } else if (/invalid password/i.test(msg)) {
+        setJoinError('Invalid password. Please try again.');
+        setShowPasswordDialog(true);
+        setRoomJoinStatus('failed');
+        joinInProgress.current = false;
+      } else {
+        setError(`Server error: ${msg}`);
+      }
+    };
+
     const onConnectError = (err) => {
-      // Ignore engine connect_error if we're already connected (common with polling)
       if (socket.connected) {
-        // Downgrade to debug to avoid alarming logs when connection is healthy
         console.debug('Socket connect_error while connected (ignored):', err?.message || err);
         return;
       }
@@ -187,40 +271,20 @@ const Theater = () => {
         }
       }, 4000);
     };
-    const onIoError = (err) => console.error('Engine.IO error:', err);
-    const onServerError = (err) => {
-      const msg = err?.message || 'Unknown server error';
-      console.error('Socket server error:', msg);
-      setError(`Socket error: ${msg}`);
-      if (/invalid password/i.test(msg)) {
-        setJoinError('Invalid password. Please try again.');
-        setShowPasswordDialog(true);
-        setJoined(false);
-        joinInProgress.current = false;
-      }
-    };
-    const onReconnectAttempt = (n) => { reconnectAttempts.current = n; console.warn('Socket reconnect attempt:', n); };
-    const onReconnectError = (err) => console.error('Socket reconnect error:', err);
-    const onIoConnectError = (err) => console.error('Engine connect_error:', err);
-    const onIoConnectTimeout = () => { console.error('Socket connect timeout'); setError('Socket connect error: timeout'); };
 
+    // Register all socket event listeners
     socket.on('connect', onConnect);
-    socket.on('connection_response', onConnectionResponse);
+    socket.on('room_joined', onRoomJoined);
     socket.on('user_joined', onUserJoined);
     socket.on('user_left', onUserLeft);
-    socket.on('room_joined', onRoomJoined);
     socket.on('playback_updated', onPlaybackUpdated);
     socket.on('new_chat_message', onNewChat);
     socket.on('new_reaction', onNewReaction);
-    socket.on('connect_error', onConnectError);
-    socket.io.on('error', onIoError);
     socket.on('error', onServerError);
-    socket.io.on('reconnect_attempt', onReconnectAttempt);
-    socket.io.on('reconnect_error', onReconnectError);
-    socket.io.on('connect_error', onIoConnectError);
-    socket.io.on('connect_timeout', onIoConnectTimeout);
+    socket.on('connect_error', onConnectError);
 
-    // Now connect after listeners are set
+    // Connect if not already connected
+    const engine = socket.io?.engine;
     const opening = socket.connected ? false : (engine?.readyState === 'opening');
     if (!socket.connected && !opening) {
       console.log('🔁 [Socket] Initiating connection...');
@@ -228,41 +292,77 @@ const Theater = () => {
     }
 
     return () => {
-      if (currentUser) {
+      // Cleanup: leave room and remove listeners
+      if (currentUser && roomJoinStatus === 'joined') {
+        console.log('🚪 [Socket] Leaving room on cleanup');
         socket.emit('leave_room', { room_id: roomId, user_id: currentUser.uid });
       }
+      
       socket.off('connect', onConnect);
-      socket.off('connection_response', onConnectionResponse);
+      socket.off('room_joined', onRoomJoined);
       socket.off('user_joined', onUserJoined);
       socket.off('user_left', onUserLeft);
-      socket.off('room_joined', onRoomJoined);
       socket.off('playback_updated', onPlaybackUpdated);
       socket.off('new_chat_message', onNewChat);
       socket.off('new_reaction', onNewReaction);
-      socket.off('connect_error', onConnectError);
-      socket.io.off('error', onIoError);
       socket.off('error', onServerError);
-      socket.io.off('reconnect_attempt', onReconnectAttempt);
-      socket.io.off('reconnect_error', onReconnectError);
-      socket.io.off('connect_error', onIoConnectError);
-      socket.io.off('connect_timeout', onIoConnectTimeout);
+      socket.off('connect_error', onConnectError);
+      
       if (connectErrorTimer.current) {
         clearTimeout(connectErrorTimer.current);
         connectErrorTimer.current = null;
       }
       reconnectAttempts.current = 0;
+      joinInProgress.current = false;
     };
-  }, [roomId, currentUser, backendToken, attemptJoin, showReactionBubble]);
+  }, [roomId, currentUser?.uid, backendToken, attemptJoin, showReactionBubble, checkIfHost]);
 
-  // Re-attempt join when room details load or password changes
+  // Re-attempt join when conditions are met
   useEffect(() => {
-    attemptJoin();
-  }, [attemptJoin]);
+    if (room && roomJoinStatus === 'initial') {
+      attemptJoin();
+    }
+  }, [room, roomJoinStatus, attemptJoin]);
 
-  // Toggle play/pause
+  // FIXED: Enhanced toggle play with proper validation
   const togglePlay = () => {
-    setIsPlaying(!isPlaying);
-    socket.emit('update_playback', { room_id: roomId, user_id: currentUser.uid, playback_state: { is_playing: !isPlaying, current_time: currentTime } });
+    if (!canControlPlayback()) {
+      console.warn('❌ [Theater] Cannot control playback:', {
+        roomJoinStatus,
+        hasUser: !!currentUser,
+        hasMovie: !!selectedMovie,
+        isHost
+      });
+      
+      if (roomJoinStatus !== 'joined') {
+        setError('You must join the room first before controlling playback.');
+      } else if (!selectedMovie) {
+        setError('Please select a movie first.');
+      } else if (!isHost) {
+        setError('Only the host can control playback.');
+      }
+      return;
+    }
+
+    const newPlayState = !isPlaying;
+    console.log('▶️ [Theater] Toggling playback:', { 
+      from: isPlaying, 
+      to: newPlayState,
+      currentTime 
+    });
+
+    // Optimistically update UI
+    setIsPlaying(newPlayState);
+    
+    // Send to server
+    socket.emit('update_playback', {
+      room_id: roomId,
+      user_id: currentUser.uid,
+      playback_state: { 
+        is_playing: newPlayState, 
+        current_time: currentTime 
+      },
+    });
   };
   
   // Toggle mute
@@ -272,6 +372,7 @@ const Theater = () => {
   
   // Handle movie selection
   const handleMovieSelect = (movie) => {
+    console.log('🎬 [Theater] Movie selected:', movie);
     setSelectedMovie(movie);
     setShowMovieBrowser(false);
     // Reset playback state
@@ -292,72 +393,99 @@ const Theater = () => {
     exit: { opacity: 0, scale: 0, transition: { duration: 0.2 } },
   };
 
+  // Loading state
   if (loading) {
-    return <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}><CircularProgress /></Box>;
+    return (
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}>
+        <CircularProgress />
+        <Typography sx={{ ml: 2 }}>Loading theater...</Typography>
+      </Box>
+    );
   }
 
+  // Error state
   if (error) {
     return (
       <Container sx={{ mt: 4 }}>
-        <Alert severity="error">{error}</Alert>
+        <Alert severity="error" action={
+          <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        }>
+          {error}
+        </Alert>
       </Container>
     );
   }
 
-  // Gate the theater content for private rooms until the socket join succeeds
-  if (room && (room.is_private || room.password) && !joined) {
+  // Private room gate - show status plus password dialog when required
+  if (room && (room.is_private || room.password) && roomJoinStatus !== 'joined') {
     return (
-      <Container sx={{ mt: 4 }}>
-        <Alert severity="info" sx={{ mb: 2 }}>
-          This room is private. Enter the password to join.
-        </Alert>
-        {showPasswordDialog && (
-          <Dialog open onClose={() => setShowPasswordDialog(false)}>
-            <DialogTitle>Enter Room Password</DialogTitle>
-            <DialogContent>
-              {joinError && (
-                <Alert severity="error" sx={{ mb: 2 }}>
-                  {joinError}
-                </Alert>
-              )}
-              <TextField
-                autoFocus
-                margin="dense"
-                label="Password"
-                type="password"
-                fullWidth
-                value={passwordInput}
-                onChange={(e) => {
-                  setPasswordInput(e.target.value);
-                  passwordRef.current = e.target.value;
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    setJoinError('');
-                    attemptJoin();
-                  }
-                }}
-              />
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setShowPasswordDialog(false)}>Cancel</Button>
-              <Button
-                variant="contained"
-                onClick={() => {
+      <>
+        <Container sx={{ mt: 4 }}>
+          <Alert severity="info" sx={{ mb: 2 }}>
+            This room is private. {roomJoinStatus === 'joining' ? 'Joining...' : 'Enter the password to join.'}
+          </Alert>
+          {roomJoinStatus === 'joining' && (
+            <Box sx={{ display: 'flex', alignItems: 'center', mt: 2 }}>
+              <CircularProgress size={20} sx={{ mr: 1 }} />
+              <Typography>Joining room...</Typography>
+            </Box>
+          )}
+        </Container>
+
+        {/* Private Room Password Dialog */}
+        <Dialog
+          open={showPasswordDialog}
+          onClose={() => setShowPasswordDialog(false)}
+        >
+          <DialogTitle>Enter Room Password</DialogTitle>
+          <DialogContent>
+            {joinError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {joinError}
+              </Alert>
+            )}
+            <TextField
+              autoFocus
+              margin="dense"
+              label="Password"
+              type="password"
+              fullWidth
+              value={passwordInput}
+              onChange={(e) => {
+                setPasswordInput(e.target.value);
+                passwordRef.current = e.target.value;
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
                   setJoinError('');
                   attemptJoin();
-                }}
-              >
-                Join
-              </Button>
-            </DialogActions>
-          </Dialog>
-        )}
-      </Container>
+                }
+              }}
+              disabled={roomJoinStatus === 'joining'}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowPasswordDialog(false)}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={() => {
+                setJoinError('');
+                attemptJoin();
+              }}
+              disabled={roomJoinStatus === 'joining'}
+            >
+              {roomJoinStatus === 'joining' ? 'Joining...' : 'Join'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </>
     );
   }
 
+  // Main theater interface
   return (
     <motion.div
       variants={containerVariants}
@@ -366,6 +494,22 @@ const Theater = () => {
       exit="exit"
     >
       <Container maxWidth="xl" sx={{ height: '100%' }}>
+        {/* Room Status Indicator */}
+        <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Box
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              backgroundColor: roomJoinStatus === 'joined' ? 'success.main' : 'warning.main'
+            }}
+          />
+          <Typography variant="caption" color="text.secondary">
+            {roomJoinStatus === 'joined' ? 'Connected to room' : 'Connecting...'}
+            {isHost && ' • Host'}
+          </Typography>
+        </Box>
+
         <Grid container spacing={2} sx={{ height: '100%' }}>
           {/* Main Theater Area */}
           <Grid item xs={12} md={showChat ? 8 : 12} lg={showChat ? 9 : 12}>
@@ -425,7 +569,9 @@ const Theater = () => {
                   <VideoPlayer 
                     isPlaying={isPlaying} 
                     isMuted={isMuted} 
-                    fileId={selectedMovie.id} 
+                    fileId={selectedMovie.id}
+                    currentTime={currentTime}
+                    onTimeUpdate={setCurrentTime}
                   />
                 ) : (
                   <Box 
@@ -447,6 +593,7 @@ const Theater = () => {
                       variant="contained" 
                       color="primary"
                       onClick={() => setShowMovieBrowser(true)}
+                      disabled={roomJoinStatus !== 'joined'}
                     >
                       Browse Movies
                     </Button>
@@ -484,21 +631,39 @@ const Theater = () => {
                 }}
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <IconButton onClick={togglePlay} color="primary" disabled={!selectedMovie}>
-                    {isPlaying ? <Pause /> : <PlayArrow />}
-                  </IconButton>
-                  <IconButton onClick={toggleMute} color="primary" disabled={!selectedMovie}>
-                    {isMuted ? <VolumeMute /> : <VolumeUp />}
-                  </IconButton>
-                  <IconButton color="primary" disabled={!selectedMovie}>
-                    <SkipNext />
-                  </IconButton>
+                  {/* FIXED: Wrapped disabled button with span for tooltip */}
+                  <Tooltip title={canControlPlayback() ? (isPlaying ? 'Pause' : 'Play') : isHost ? 'Select a movie first' : 'Only host can control playback'}>
+                    <span>
+                      <IconButton 
+                        onClick={togglePlay} 
+                        color="primary" 
+                        disabled={!canControlPlayback()}
+                      >
+                        {isPlaying ? <Pause /> : <PlayArrow />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title={isMuted ? 'Unmute' : 'Mute'}>
+                    <span>
+                      <IconButton onClick={toggleMute} color="primary" disabled={!selectedMovie}>
+                        {isMuted ? <VolumeMute /> : <VolumeUp />}
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                  <Tooltip title="Next">
+                    <span>
+                      <IconButton color="primary" disabled={!selectedMovie}>
+                        <SkipNext />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
                   <Button 
                     variant="outlined" 
                     size="small" 
                     startIcon={<Movie />}
                     onClick={() => setShowMovieBrowser(true)}
                     sx={{ ml: 2 }}
+                    disabled={roomJoinStatus !== 'joined'}
                   >
                     {selectedMovie ? 'Change Movie' : 'Select Movie'}
                   </Button>
@@ -506,24 +671,44 @@ const Theater = () => {
                 
                 <Box sx={{ display: 'flex', gap: 2 }}>
                   <Tooltip title="😀">
-                    <IconButton onClick={() => showReactionBubble('😀')} size="small">
-                      <Typography variant="h6">😀</Typography>
-                    </IconButton>
+                    <span>
+                      <IconButton 
+                        onClick={() => showReactionBubble('😀')} 
+                        size="small"
+                        disabled={roomJoinStatus !== 'joined'}
+                      >
+                        <Typography variant="h6">😀</Typography>
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="👍">
-                    <IconButton onClick={() => showReactionBubble('👍')} size="small">
-                      <Typography variant="h6">👍</Typography>
-                    </IconButton>
+                    <span>
+                      <IconButton 
+                        onClick={() => showReactionBubble('👍')} 
+                        size="small"
+                        disabled={roomJoinStatus !== 'joined'}
+                      >
+                        <Typography variant="h6">👍</Typography>
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="❤️">
-                    <IconButton onClick={() => showReactionBubble('❤️')} size="small">
-                      <Typography variant="h6">❤️</Typography>
-                    </IconButton>
+                    <span>
+                      <IconButton 
+                        onClick={() => showReactionBubble('❤️')} 
+                        size="small"
+                        disabled={roomJoinStatus !== 'joined'}
+                      >
+                        <Typography variant="h6">❤️</Typography>
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   <Tooltip title="Fullscreen">
-                    <IconButton color="primary">
-                      <Fullscreen />
-                    </IconButton>
+                    <span>
+                      <IconButton color="primary" disabled={!selectedMovie}>
+                        <Fullscreen />
+                      </IconButton>
+                    </span>
                   </Tooltip>
                 </Box>
               </Box>
@@ -531,7 +716,7 @@ const Theater = () => {
           </Grid>
           
           {/* Chat Panel */}
-          {showChat && room && (
+          {showChat && room && roomJoinStatus === 'joined' && (
             <Grid item xs={12} md={4} lg={3}>
               <motion.div
                 initial={{ opacity: 0, x: 50 }}
@@ -549,7 +734,12 @@ const Theater = () => {
                     backdropFilter: 'blur(10px)',
                   }}
                 >
-                  <ChatPanel users={users} roomId={roomId} messages={messages} setMessages={setMessages} />
+                  <ChatPanel 
+                    users={users} 
+                    roomId={roomId} 
+                    messages={messages} 
+                    setMessages={setMessages} 
+                  />
                 </Paper>
               </motion.div>
             </Grid>
@@ -557,7 +747,7 @@ const Theater = () => {
         </Grid>
         
         {/* Mobile Chat Toggle Button */}
-        {isMobile && (
+        {isMobile && roomJoinStatus === 'joined' && (
           <Zoom in={!showChat}>
             <Fab 
               color="primary" 
@@ -635,7 +825,10 @@ const Theater = () => {
             type="password"
             fullWidth
             value={passwordInput}
-            onChange={(e) => { setPasswordInput(e.target.value); passwordRef.current = e.target.value; }}
+            onChange={(e) => { 
+              setPasswordInput(e.target.value); 
+              passwordRef.current = e.target.value; 
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -643,6 +836,7 @@ const Theater = () => {
                 attemptJoin();
               }
             }}
+            disabled={roomJoinStatus === 'joining'}
           />
         </DialogContent>
         <DialogActions>
@@ -653,8 +847,9 @@ const Theater = () => {
               setJoinError('');
               attemptJoin();
             }}
+            disabled={roomJoinStatus === 'joining'}
           >
-            Join
+            {roomJoinStatus === 'joining' ? 'Joining...' : 'Join'}
           </Button>
         </DialogActions>
       </Dialog>

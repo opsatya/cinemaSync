@@ -278,8 +278,15 @@ class DriveService:
             
             # This is a simplified approach - in production, you might want to use signed URLs
             # or implement token-based authentication for these streaming links
-            base_url = os.getenv('API_BASE_URL', 'http://localhost:5000')
-            stream_url = f"{base_url}/api/stream/{file_id}"
+            base_url = os.getenv('API_BASE_URL', 'http://localhost:5000').rstrip('/')
+            
+            # If the configured base URL already ends with '/api', avoid adding it twice
+            if base_url.endswith('/api'):
+                # Generate URL with single '/api'
+                stream_url = f"{base_url}/stream/{file_id}"
+            else:
+                # Append '/api' segment if not present
+                stream_url = f"{base_url}/api/stream/{file_id}"
             
             # Save metadata to MongoDB if available
             try:

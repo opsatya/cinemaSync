@@ -51,6 +51,12 @@ def create_app():
             'message': 'CinemaSync Backend is running',
             'api_endpoint': '/api'
         })
+
+    # Health check endpoint for frontend connectivity tests
+    @app.route('/health')
+    def health():
+        """Simple health check returning 200 OK"""
+        return jsonify({'success': True, 'message': 'OK'}), 200
     
     # Redirect /movies/list to /api/movies/list
     @app.route('/movies/list')
