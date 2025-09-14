@@ -64,7 +64,7 @@ def init_db():
     """Initialize MongoDB connection"""
     global client, db
     mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-    db_name = os.getenv('MONGODB_DB_NAME', 'CinemaSync')
+    db_name = os.getenv('MONGODB_DB_NAME', 'cinemasync')
     
     try:
         client = MongoClient(mongo_uri)
@@ -231,170 +231,239 @@ class Room:
     @staticmethod
     def create_room(data):
         """Create a new room"""
-        collection = Room.get_collection()
-        
-        # Generate a unique room ID
-        room_id = str(uuid.uuid4())[:8].upper()
-        
-        # Ensure required fields
-        if 'host_id' not in data:
-            raise ValueError("host_id is required")
-        if 'movie_source' not in data:
-            raise ValueError("movie_source is required")
+        try:
+            collection = Room.get_collection()
             
-        # Create room document
-        room_data = {
-            'room_id': room_id,
-            'host_id': data['host_id'],
-            'name': data.get('name', f"Room {room_id}"),
-            'description': data.get('description', ''),
-            'movie_source': data['movie_source'],
-            'password': data.get('password', None),
-            'is_private': data.get('is_private', True),
-            'enable_chat': data.get('enable_chat', True),
-            'enable_reactions': data.get('enable_reactions', True),
-            'max_participants': data.get('max_participants', 10),
-            'participants': [{
-                'user_id': data['host_id'],
-                'is_host': True,
-                'joined_at': datetime.utcnow()
-            }],
-            'playback_state': {
-                'is_playing': False,
-                'current_time': 0,
-                'last_updated': datetime.utcnow()
-            },
-            'created_at': datetime.utcnow(),
-            'updated_at': datetime.utcnow(),
-            'is_active': True
-        }
-        
-        # Insert room document
-        result = collection.insert_one(room_data)
-        
-        if result.inserted_id:
-            # Return serialized version
-            return serialize_document(room_data)
-        else:
-            raise Exception("Failed to create room")
+            # Generate a unique room ID
+            room_id = str(uuid.uuid4())[:8].upper()
+            
+            # Ensure required fields
+            if 'host_id' not in data:
+                raise ValueError("host_id is required")
+            if 'movie_source' not in data:
+                raise ValueError("movie_source is required")
+                
+            # Create room document
+            room_data = {
+                'room_id': room_id,
+                'host_id': data['host_id'],
+                'name': data.get('name', f"Room {room_id}"),
+                'description': data.get('description', ''),
+                'movie_source': data['movie_source'],
+                'password': data.get('password', None),
+                'is_private': data.get('is_private', True),
+                'enable_chat': data.get('enable_chat', True),
+                'enable_reactions': data.get('enable_reactions', True),
+                'max_participants': data.get('max_participants', 10),
+                # Ensure host is ALWAYS in participants
+                'participants': [{
+                    'user_id': data['host_id'],
+                    'is_host': True,
+                    'joined_at': datetime.utcnow()
+                }],
+                'playback_state': {
+                    'is_playing': False,
+                    'current_time': 0,
+                    'last_updated': datetime.utcnow()
+                },
+                'created_at': datetime.utcnow(),
+                'updated_at': datetime.utcnow(),
+                'is_active': True
+            }
+            
+            # Insert room document
+            result = collection.insert_one(room_data)
+            
+            if result.inserted_id:
+                print(f"✅ Room created: {room_id} with host {data['host_id']} in participants")
+                return serialize_document(room_data)
+            else:
+                raise Exception("Failed to create room")
+                
+        except Exception as e:
+            print(f"❌ Error creating room: {e}")
+            raise e
     
     @staticmethod
     def find_by_id(room_id):
-        """Find room by ID"""
-        collection = Room.get_collection()
-        doc = collection.find_one({'room_id': room_id})
-        return serialize_document(doc)
+        """Find room by ID and return serialized data"""
+        try:
+            collection = Room.get_collection()
+            doc = collection.find_one({'room_id': room_id})
+            return serialize_document(doc)
+        except Exception as e:
+            print(f"❌ Error finding room {room_id}: {e}")
+            return None
     
     @staticmethod
     def find_by_user_id(user_id):
-        """Find all active rooms a user is a participant in."""
-        collection = Room.get_collection()
-        cursor = collection.find({
-            'participants.user_id': user_id,
-            'is_active': True
-        }).sort('updated_at', -1)
-        return [serialize_document(doc) for doc in cursor]
+        """Find all active rooms a user is a participant in OR hosting."""
+        try:
+            collection = Room.get_collection()
+            
+            print(f"🔍 Looking for rooms for user_id: {user_id}")
+            
+            # More lenient query for debugging
+            query = {
+                '$or': [
+                    {'host_id': user_id},  # User is the host
+                    {'participants.user_id': user_id},  # User is in participants
+                    # Extra case: empty participants but user is host
+                    {'$and': [
+                        {'host_id': user_id},
+                        {'participants': {'$size': 0}}
+                    ]}
+                ],
+                'is_active': True
+            }
+            
+            print(f"🔍 MongoDB query: {query}")
+            
+            cursor = collection.find(query).sort('updated_at', -1)
+            rooms = [serialize_document(doc) for doc in cursor]
+            
+            print(f"🔍 Found {len(rooms)} rooms for user {user_id}")
+            
+            return rooms
+        except Exception as e:
+            print(f"❌ Error finding rooms for user {user_id}: {e}")
+            return []
     
     @staticmethod
     def add_participant(room_id, user_id):
         """Add a participant to a room"""
-        collection = Room.get_collection()
-        room_doc = collection.find_one({'room_id': room_id})
-        
-        if not room_doc:
-            raise ValueError("Room not found")
+        try:
+            collection = Room.get_collection()
+            room_doc = collection.find_one({'room_id': room_id})
             
-        # Check if user is already in the room
-        for participant in room_doc['participants']:
-            if participant['user_id'] == user_id:
-                return serialize_document(room_doc)
+            if not room_doc:
+                raise ValueError("Room not found")
                 
-        # Check if room is full
-        if len(room_doc['participants']) >= room_doc['max_participants']:
-            raise ValueError("Room is full")
+            # Check if user is already in the room
+            for participant in room_doc['participants']:
+                if participant['user_id'] == user_id:
+                    return serialize_document(room_doc)
+                    
+            # Check if room is full
+            if len(room_doc['participants']) >= room_doc['max_participants']:
+                raise ValueError("Room is full")
+                
+            # Add participant
+            collection.update_one(
+                {'room_id': room_id},
+                {'$push': {'participants': {
+                    'user_id': user_id,
+                    'is_host': False,
+                    'joined_at': datetime.utcnow()
+                }}}
+            )
             
-        # Add participant
-        collection.update_one(
-            {'room_id': room_id},
-            {'$push': {'participants': {
-                'user_id': user_id,
-                'is_host': False,
-                'joined_at': datetime.utcnow()
-            }}}
-        )
-        
-        return Room.find_by_id(room_id)
+            return Room.find_by_id(room_id)
+        except Exception as e:
+            print(f"❌ Error adding participant: {e}")
+            raise e
     
     @staticmethod
     def remove_participant(room_id, user_id):
         """Remove a participant from a room"""
-        collection = Room.get_collection()
-        room_doc = collection.find_one({'room_id': room_id})
-        
-        if not room_doc:
-            raise ValueError("Room not found")
+        try:
+            collection = Room.get_collection()
+            room_doc = collection.find_one({'room_id': room_id})
             
-        # Remove participant
-        collection.update_one(
-            {'room_id': room_id},
-            {'$pull': {'participants': {'user_id': user_id}}}
-        )
-        
-        # If room is empty, deactivate it
-        updated_room_doc = collection.find_one({'room_id': room_id})
-        if len(updated_room_doc['participants']) == 0:
-            Room.deactivate_room(room_id)
+            if not room_doc:
+                raise ValueError("Room not found")
+                
+            # Remove participant
+            collection.update_one(
+                {'room_id': room_id},
+                {'$pull': {'participants': {'user_id': user_id}}}
+            )
             
-        return Room.find_by_id(room_id)
+            # If room is empty, deactivate it
+            updated_room_doc = collection.find_one({'room_id': room_id})
+            if len(updated_room_doc['participants']) == 0:
+                Room.deactivate_room(room_id)
+                
+            return Room.find_by_id(room_id)
+        except Exception as e:
+            print(f"❌ Error removing participant: {e}")
+            raise e
     
     @staticmethod
     def update_playback_state(room_id, playback_state):
         """Update room playback state"""
-        collection = Room.get_collection()
-        room_doc = collection.find_one({'room_id': room_id})
-        
-        if not room_doc:
-            raise ValueError("Room not found")
+        try:
+            collection = Room.get_collection()
+            room_doc = collection.find_one({'room_id': room_id})
             
-        # Update playback state with datetime
-        playback_state['last_updated'] = datetime.utcnow()
-        
-        collection.update_one(
-            {'room_id': room_id},
-            {'$set': {
-                'playback_state': playback_state,
-                'updated_at': datetime.utcnow()
-            }}
-        )
-        
-        return Room.find_by_id(room_id)
+            if not room_doc:
+                raise ValueError("Room not found")
+                
+            # Update playback state with datetime
+            playback_state['last_updated'] = datetime.utcnow()
+            
+            collection.update_one(
+                {'room_id': room_id},
+                {'$set': {
+                    'playback_state': playback_state,
+                    'updated_at': datetime.utcnow()
+                }}
+            )
+            
+            return Room.find_by_id(room_id)
+        except Exception as e:
+            print(f"❌ Error updating playback state: {e}")
+            raise e
     
     @staticmethod
     def deactivate_room(room_id):
         """Deactivate a room"""
-        collection = Room.get_collection()
-        room_doc = collection.find_one({'room_id': room_id})
-        
-        if not room_doc:
-            raise ValueError("Room not found")
+        try:
+            collection = Room.get_collection()
+            room_doc = collection.find_one({'room_id': room_id})
             
-        collection.update_one(
-            {'room_id': room_id},
-            {'$set': {
-                'is_active': False,
-                'updated_at': datetime.utcnow()
-            }}
-        )
-        
-        return Room.find_by_id(room_id)
+            if not room_doc:
+                raise ValueError("Room not found")
+                
+            collection.update_one(
+                {'room_id': room_id},
+                {'$set': {
+                    'is_active': False,
+                    'updated_at': datetime.utcnow()
+                }}
+            )
+            
+            return Room.find_by_id(room_id)
+        except Exception as e:
+            print(f"❌ Error deactivating room: {e}")
+            raise e
         
     @staticmethod
     def get_active_rooms(limit=20, skip=0):
-        """Get list of active rooms"""
-        collection = Room.get_collection()
-        cursor = collection.find({'is_active': True, 'is_private': False})
-        
-        # Sort by creation date (newest first) and apply pagination
-        cursor = cursor.sort('created_at', -1).skip(skip).limit(limit)
-        
-        return [serialize_document(doc) for doc in cursor]
+        """Get list of active public rooms"""
+        try:
+            collection = Room.get_collection()
+            cursor = collection.find({'is_active': True, 'is_private': False})
+            
+            # Sort by creation date (newest first) and apply pagination
+            cursor = cursor.sort('created_at', -1).skip(skip).limit(limit)
+            
+            return [serialize_document(doc) for doc in cursor]
+        except Exception as e:
+            print(f"❌ Error getting active rooms: {e}")
+            return []
+    
+    @staticmethod
+    def get_rooms_by_host(host_id, limit=20, skip=0):
+        """Get rooms created by a specific host"""
+        try:
+            collection = Room.get_collection()
+            cursor = collection.find({
+                'host_id': host_id,
+                'is_active': True
+            }).sort('created_at', -1).skip(skip).limit(limit)
+            
+            return [serialize_document(doc) for doc in cursor]
+        except Exception as e:
+            print(f"❌ Error getting rooms by host {host_id}: {e}")
+            return []

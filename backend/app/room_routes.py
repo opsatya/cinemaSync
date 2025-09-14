@@ -301,3 +301,43 @@ def update_playback_state(room_id):
             'success': False,
             'message': f'Failed to update playback state: {str(e)}'
         }), 500
+
+@room_bp.route('/debug/<user_id>', methods=['GET'])
+def debug_user_data(user_id):
+    """Debug endpoint to see what's in the database"""
+    try:
+        from app.models import Room
+        collection = Room.get_collection()
+        
+        # Get ALL rooms for debugging
+        all_rooms = list(collection.find({}))
+        
+        result = {
+            'user_id': user_id,
+            'total_rooms_in_db': len(all_rooms),
+            'rooms_analysis': []
+        }
+        
+        for room in all_rooms:
+            analysis = {
+                'room_id': room.get('room_id'),
+                'host_id': room.get('host_id'),
+                'is_active': room.get('is_active'),
+                'participants_count': len(room.get('participants', [])),
+                'participants': room.get('participants', []),
+                'user_is_host': room.get('host_id') == user_id,
+                'user_in_participants': False
+            }
+            
+            # Check if user is in participants
+            for p in room.get('participants', []):
+                if isinstance(p, dict) and p.get('user_id') == user_id:
+                    analysis['user_in_participants'] = True
+                    break
+            
+            result['rooms_analysis'].append(analysis)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)})
