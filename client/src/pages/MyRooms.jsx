@@ -97,11 +97,11 @@ const MyRooms = () => {
   // Filter rooms based on search query and active tab
   const filteredRooms = rooms
     .filter(room => {
-      const matchesSearch = room.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          room.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesSearch = room.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          room.description?.toLowerCase().includes(searchQuery.toLowerCase());
       
       if (tabValue === 0) return matchesSearch; // All rooms
-      if (tabValue === 1) return matchesSearch && favoriteRooms.includes(room.id); // Favorites
+      if (tabValue === 1) return matchesSearch && favoriteRooms.includes(room.room_id || room.id); // Favorites
       if (tabValue === 2) return matchesSearch && new Date(room.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Recent (last 7 days)
       
       return matchesSearch;
@@ -235,130 +235,138 @@ const MyRooms = () => {
                   </Typography>
                 </Box>
               ) : (
-              <Grid container spacing={{ xs: 2, sm: 3 }}>
-                {filteredRooms.map((room) => (
-                  <Grid item xs={12} sm={6} lg={4} key={room.id}>
-                    <motion.div
-                      whileHover={{ y: -5 }}
-                      transition={{ type: 'spring', stiffness: 300, damping: 10 }}
-                    >
-                      <Card 
-                        sx={{ 
-                          height: '100%',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          borderRadius: '12px',
-                          overflow: 'hidden',
-                          backgroundColor: 'rgba(30, 41, 59, 0.5)',
-                          border: '1px solid rgba(255, 255, 255, 0.05)',
-                          transition: 'all 0.3s ease',
-                          '&:hover': {
-                            borderColor: theme.palette.primary.main,
-                            boxShadow: `0 0 20px rgba(${parseInt(theme.palette.primary.main.slice(1, 3), 16)}, ${parseInt(theme.palette.primary.main.slice(3, 5), 16)}, ${parseInt(theme.palette.primary.main.slice(5, 7), 16)}, 0.3)`,
-                          },
-                        }}
-                      >
-                        <Box 
-                          sx={{ 
-                            p: 2, 
-                            display: 'flex', 
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                          }}
+                <Grid container spacing={{ xs: 2, sm: 3 }}>
+                  {filteredRooms.map((room) => {
+                    // Create a unique key using room_id, id, or fallback to index
+                    const roomKey = room.room_id || room.id || `room-${Math.random()}`;
+                    const roomId = room.room_id || room.id;
+                    
+                    return (
+                      <Grid item xs={12} sm={6} lg={4} key={roomKey}>
+                        <motion.div
+                          whileHover={{ y: -5 }}
+                          transition={{ type: 'spring', stiffness: 300, damping: 10 }}
                         >
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Avatar 
-                              sx={{ 
-                                bgcolor: theme.palette.primary.main,
-                                width: 32,
-                                height: 32,
-                                fontSize: '0.875rem',
-                              }}
-                            >_
-                              {room.name.charAt(0)}
-                            </Avatar>
-                            <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
-                              {room.name}
-                            </Typography>
-                          </Box>
-                          <IconButton 
-                            size="small" 
-                            onClick={() => toggleFavorite(room.id)}
-                            color={favoriteRooms.includes(room.id) ? 'secondary' : 'default'}
-                          >
-                            {favoriteRooms.includes(room.id) ? <Favorite /> : <FavoriteBorder />}
-                          </IconButton>
-                        </Box>
-                        
-                        <CardContent sx={{ flexGrow: 1, pt: 2 }}>
-                          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                            {room.description}
-                          </Typography>
-                          
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                            <MovieFilter fontSize="small" color="primary" />
-                            <Typography variant="body2" noWrap>
-                              {room.movie_source?.value || 'Movie not set'}
-                            </Typography>
-                          </Box>
-                          
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                            <People fontSize="small" color="primary" />
-                            <Typography variant="body2">
-                              {room.participants.length} participants
-                            </Typography>
-                          </Box>
-                          
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <AccessTime fontSize="small" color="primary" />
-                            <Typography variant="body2">
-                              Created: {new Date(room.created_at).toLocaleDateString()}
-                            </Typography>
-                          </Box>
-                        </CardContent>
-                        
-                        <Box sx={{ display: 'flex', p: 1, pt: 0 }}>
-                          <Chip 
-                            label={room.isPrivate ? 'Private' : 'Public'} 
-                            size="small"
-                            color={room.isPrivate ? 'primary' : 'success'}
-                            variant="outlined"
-                            sx={{ borderRadius: '4px', height: 24 }}
-                          />
-                        </Box>
-                        
-                        <CardActions sx={{ p: 2, pt: 0, justifyContent: 'space-between' }}>
-                          <Box sx={{ display: 'flex', gap: 1 }}>
-                            <IconButton size="small" color="primary">
-                              <Edit fontSize="small" />
-                            </IconButton>
-                            <IconButton size="small" color="primary">
-                              <Share fontSize="small" />
-                            </IconButton>
-                            <IconButton size="small" color="error">
-                              <Delete fontSize="small" />
-                            </IconButton>
-                          </Box>
-                          
-                          <Button 
-                            variant="contained" 
-                            size="small"
-                            onClick={() => handleJoinRoom(room.room_id)}
+                          <Card 
                             sx={{ 
-                              borderRadius: '8px',
-                              bgcolor: theme.palette.primary.main,
+                              height: '100%',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              borderRadius: '12px',
+                              overflow: 'hidden',
+                              backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                              border: '1px solid rgba(255, 255, 255, 0.05)',
+                              transition: 'all 0.3s ease',
+                              '&:hover': {
+                                borderColor: theme.palette.primary.main,
+                                boxShadow: `0 0 20px rgba(${parseInt(theme.palette.primary.main.slice(1, 3), 16)}, ${parseInt(theme.palette.primary.main.slice(3, 5), 16)}, ${parseInt(theme.palette.primary.main.slice(5, 7), 16)}, 0.3)`,
+                              },
                             }}
                           >
-                            Join Room
-                          </Button>
-                        </CardActions>
-                      </Card>
-                    </motion.div>
-                  </Grid>
-                ))}
-              </Grid>
-            ))}
+                            <Box 
+                              sx={{ 
+                                p: 2, 
+                                display: 'flex', 
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+                              }}
+                            >
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Avatar 
+                                  sx={{ 
+                                    bgcolor: theme.palette.primary.main,
+                                    width: 32,
+                                    height: 32,
+                                    fontSize: '0.875rem',
+                                  }}
+                                >
+                                  {room.name?.charAt(0) || 'R'}
+                                </Avatar>
+                                <Typography variant="subtitle1" sx={{ fontWeight: 'medium' }}>
+                                  {room.name || 'Unnamed Room'}
+                                </Typography>
+                              </Box>
+                              <IconButton 
+                                size="small" 
+                                onClick={() => toggleFavorite(roomId)}
+                                color={favoriteRooms.includes(roomId) ? 'secondary' : 'default'}
+                              >
+                                {favoriteRooms.includes(roomId) ? <Favorite /> : <FavoriteBorder />}
+                              </IconButton>
+                            </Box>
+                            
+                            <CardContent sx={{ flexGrow: 1, pt: 2 }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                {room.description || 'No description available'}
+                              </Typography>
+                              
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                <MovieFilter fontSize="small" color="primary" />
+                                <Typography variant="body2" noWrap>
+                                  {room.movie_source?.value || room.movie_source?.type || 'Movie not set'}
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                <People fontSize="small" color="primary" />
+                                <Typography variant="body2">
+                                  {room.participants?.length || 0} participants
+                                </Typography>
+                              </Box>
+                              
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <AccessTime fontSize="small" color="primary" />
+                                <Typography variant="body2">
+                                  Created: {room.created_at ? new Date(room.created_at).toLocaleDateString() : 'Unknown'}
+                                </Typography>
+                              </Box>
+                            </CardContent>
+                            
+                            <Box sx={{ display: 'flex', p: 1, pt: 0 }}>
+                              <Chip 
+                                label={room.is_private || room.isPrivate ? 'Private' : 'Public'} 
+                                size="small"
+                                color={room.is_private || room.isPrivate ? 'primary' : 'success'}
+                                variant="outlined"
+                                sx={{ borderRadius: '4px', height: 24 }}
+                              />
+                            </Box>
+                            
+                            <CardActions sx={{ p: 2, pt: 0, justifyContent: 'space-between' }}>
+                              <Box sx={{ display: 'flex', gap: 1 }}>
+                                <IconButton size="small" color="primary">
+                                  <Edit fontSize="small" />
+                                </IconButton>
+                                <IconButton size="small" color="primary">
+                                  <Share fontSize="small" />
+                                </IconButton>
+                                <IconButton size="small" color="error">
+                                  <Delete fontSize="small" />
+                                </IconButton>
+                              </Box>
+                              
+                              <Button 
+                                variant="contained" 
+                                size="small"
+                                onClick={() => handleJoinRoom(roomId)}
+                                sx={{ 
+                                  borderRadius: '8px',
+                                  bgcolor: theme.palette.primary.main,
+                                }}
+                                disabled={!roomId}
+                              >
+                                Join Room
+                              </Button>
+                            </CardActions>
+                          </Card>
+                        </motion.div>
+                      </Grid>
+                    );
+                  })}
+                </Grid>
+              )
+            )}
           </Paper>
         </Box>
       </motion.div>

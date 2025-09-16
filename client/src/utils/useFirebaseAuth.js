@@ -5,9 +5,7 @@ import {
   signOut, 
   onAuthStateChanged,
   GoogleAuthProvider,
-  signInWithRedirect,
   signInWithPopup,
-  getRedirectResult,
   updateProfile
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
@@ -23,6 +21,25 @@ export const useFirebaseAuth = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Utility: normalize Firebase errors
+  const getErrorMessage = (err) => {
+    if (!err || !err.code) return err?.message || 'Unknown error';
+    switch (err.code) {
+      case 'auth/email-already-in-use':
+        return 'This email is already registered.';
+      case 'auth/invalid-email':
+        return 'Invalid email format.';
+      case 'auth/wrong-password':
+        return 'Incorrect password.';
+      case 'auth/user-not-found':
+        return 'No account found with this email.';
+      case 'auth/popup-closed-by-user':
+        return 'Popup was closed before login could complete.';
+      default:
+        return err.message || 'Authentication failed';
+    }
+  };
+
   // Exchange Firebase ID token for backend JWT
   const exchangeForBackendToken = async (firebaseUser) => {
     try {
@@ -32,13 +49,12 @@ export const useFirebaseAuth = () => {
         return;
       }
 
-      // Test backend connectivity first
+      // Ensure backend is reachable
       const isBackendReachable = await testBackendConnectivity();
       if (!isBackendReachable) {
         throw new Error('Backend is not reachable. Please check if the server is running.');
       }
 
-      // Get Firebase ID token and prepare identity
       const idToken = await firebaseUser.getIdToken(true);
       const identity = {
         user_id: firebaseUser.uid,
@@ -46,70 +62,65 @@ export const useFirebaseAuth = () => {
         email: firebaseUser.email || '',
       };
 
-      // Exchange token with backend
       const token = await exchangeToken(identity, idToken);
 
-      // Save backend token
       setBackendToken(token);
       localStorage.setItem('backendToken', token);
-
     } catch (err) {
-      console.error('Failed to exchange token:', err);
-      setError('Failed to authenticate with backend: ' + err.message);
+      console.error('Token exchange failed:', err);
+      setError(getErrorMessage(err));
       setBackendToken(null);
       localStorage.removeItem('backendToken');
     }
   };
 
-  // Register with email and password
+  // Register with email + password
   const register = async (email, password, displayName) => {
     try {
       setError(null);
-      
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      
-      // Update profile with display name if provided
+
       if (displayName) {
         await updateProfile(userCredential.user, { displayName });
       }
-      
+
+      await exchangeForBackendToken(userCredential.user);
       return userCredential.user;
     } catch (err) {
-      setError(err.message || 'Registration failed');
-      throw err;
+      const msg = getErrorMessage(err);
+      setError(msg);
+      throw new Error(msg);
     }
   };
 
-  // Login with email and password
+  // Login with email + password
   const login = async (email, password) => {
     try {
       setError(null);
-      
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      
+      await exchangeForBackendToken(userCredential.user);
       return userCredential.user;
     } catch (err) {
-      setError(err.message || 'Login failed');
-      throw err;
+      const msg = getErrorMessage(err);
+      setError(msg);
+      throw new Error(msg);
     }
   };
 
-  // Login with Google
+  // Login with Google (popup only)
   const loginWithGoogle = async () => {
     try {
       setError(null);
-      
       const provider = new GoogleAuthProvider();
-      provider.setCustomParameters({
-        prompt: 'select_account'
-      });
-      
+      provider.setCustomParameters({ prompt: 'select_account' });
+
       const result = await signInWithPopup(auth, provider);
-      
+      await exchangeForBackendToken(result.user);
       return result.user;
     } catch (err) {
-      setError(err.message || 'Google login failed');
-      throw err;
+      const msg = getErrorMessage(err);
+      setError(msg);
+      throw new Error(msg);
     }
   };
 
@@ -117,14 +128,13 @@ export const useFirebaseAuth = () => {
   const logout = async () => {
     try {
       setError(null);
-      
       await signOut(auth);
       setBackendToken(null);
       localStorage.removeItem('backendToken');
-      
     } catch (err) {
-      setError(err.message || 'Logout failed');
-      throw err;
+      const msg = getErrorMessage(err);
+      setError(msg);
+      throw new Error(msg);
     }
   };
 
@@ -135,66 +145,35 @@ export const useFirebaseAuth = () => {
     }
   };
 
-  // Main initialization effect
+  // Main auth listener
   useEffect(() => {
     let isMounted = true;
-    let unsubscribe = null;
-    
-    const initializeAuth = async () => {
-      try {
-        // Preload any existing backend token from localStorage
-        const existing = localStorage.getItem('backendToken');
-        if (existing && isMounted) {
-          setBackendToken(existing);
-        }
 
-        // Check for any pending redirect results
-        const result = await getRedirectResult(auth);
-        
-        // Set up auth state listener
-        if (isMounted) {
-          unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (!isMounted) return;
-            
-            setCurrentUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!isMounted) return;
 
-            if (user) {
-              // Check if we already have a valid backend token for this user
-              const existingToken = localStorage.getItem('backendToken');
-              
-              if (existingToken) {
-                setBackendToken(existingToken);
-              } else {
-                await exchangeForBackendToken(user);
-              }
-            } else {
-              // User signed out
-              setBackendToken(null);
-              localStorage.removeItem('backendToken');
-            }
+      setCurrentUser(user);
 
-            setLoading(false);
-          });
+      if (user) {
+        const existingToken = localStorage.getItem('backendToken');
+        if (existingToken) {
+          setBackendToken(existingToken);
+        } else {
+          await exchangeForBackendToken(user);
         }
-      } catch (error) {
-        if (isMounted) {
-          setError('Authentication initialization failed: ' + error.message);
-          setLoading(false);
-        }
+      } else {
+        setBackendToken(null);
+        localStorage.removeItem('backendToken');
       }
-    };
 
-    initializeAuth();
+      setLoading(false);
+    });
 
-    // Cleanup function
     return () => {
       isMounted = false;
-      if (unsubscribe) {
-        unsubscribe();
-      }
+      unsubscribe();
     };
   }, []);
-
 
   return {
     currentUser,
