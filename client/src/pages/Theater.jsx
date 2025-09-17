@@ -409,7 +409,6 @@ const Theater = () => {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '90vh' }}>
         <CircularProgress />
-        <Typography sx={{ ml: 2 }}>Loading theater...</Typography>
       </Box>
     );
   }

@@ -50,9 +50,6 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
       style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}
     >
       <CircularProgress color="secondary" size={60} thickness={4} />
-      <Typography variant="body1" sx={{ mt: 2, color: 'text.secondary' }}>
-        Loading video...
-      </Typography>
     </motion.div>
   );
 
