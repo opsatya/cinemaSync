@@ -19,10 +19,10 @@ GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI')
 # Use standard OpenID Connect scopes for email and profile, plus the Drive scope.
 # This is a more modern and less ambiguous way to request user information.
 SCOPES = [
-    'openid',
-    'email',
-    'profile',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/userinfo.email', 
     'https://www.googleapis.com/auth/drive.file',
+    'openid'
 ]
 
 def _build_flow():
