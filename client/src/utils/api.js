@@ -81,6 +81,29 @@ export const getGoogleTokensStatus = async (token) => {
   return data.connected;
 };
 
+// List user's Drive videos (after OAuth connection)
+export const fetchDriveVideos = async (token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/videos/drive`, {
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to fetch Drive videos');
+  // Expecting data.videos to be an array of { id, name, mimeType, ... }
+  return data.videos || [];
+};
+
+// Set selected video for a room
+export const setRoomVideo = async (roomId, payload, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/video`, {
+    method: 'POST',
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to set room video');
+  return data.room;
+};
+
 /**
  * Get streaming link for a movie
  * @param {string} fileId - Google Drive file ID
@@ -320,4 +343,8 @@ export default {
   fetchMyRooms,
   createRoom,
   getRoomDetails,
+  getGoogleAuthUrl,
+  getGoogleTokensStatus,
+  fetchDriveVideos,
+  setRoomVideo,
 };

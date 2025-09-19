@@ -8,8 +8,8 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   
-  // Get the direct streaming URL if fileId is provided
-  const streamUrl = fileId ? getDirectStreamUrl(fileId) : src;
+  // Prefer an explicit src when provided (e.g., Google Drive preview URL); otherwise fall back to backend stream by fileId
+  const streamUrl = src ? src : (fileId ? getDirectStreamUrl(fileId) : null);
   
   // Effect to handle play/pause
   useEffect(() => {

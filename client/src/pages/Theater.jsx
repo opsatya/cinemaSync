@@ -580,6 +580,7 @@ const Theater = () => {
                     isPlaying={isPlaying} 
                     isMuted={isMuted} 
                     fileId={selectedMovie.id}
+                    src={`https://drive.google.com/file/d/${selectedMovie.id}/preview`}
                     currentTime={currentTime}
                     onTimeUpdate={setCurrentTime}
                   />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -18,20 +18,45 @@ import {
   useTheme,
   Chip,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
 } from '@mui/material';
 import { Add, Movie, Link as LinkIcon, Public, Lock } from '@mui/icons-material';
 import { motion } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { createRoom as apiCreateRoom } from '../utils/api';
+import { 
+  createRoom as apiCreateRoom,
+  getGoogleAuthUrl,
+  getGoogleTokensStatus,
+  fetchDriveVideos,
+  setRoomVideo,
+} from '../utils/api';
 
 const CreateRoom = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const { backendToken } = useAuth();
-  // DEBUG: Checkpoint 3 - Log the backendToken value from context
-  console.log('🔑 [CreateRoom] backendToken from context:', backendToken ? `(length=${backendToken.length})` : backendToken);
+  // DEBUG: Log the backendToken value only when it changes (avoid logging on every render)
+  useEffect(() => {
+    if (backendToken) {
+      console.log('🔑 [CreateRoom] backendToken from context:', `(length=${backendToken.length})`);
+    } else {
+      console.log('🔑 [CreateRoom] backendToken from context:', backendToken);
+    }
+  }, [backendToken]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingDrive, setCheckingDrive] = useState(false);
+  const [driveConnected, setDriveConnected] = useState(false);
+  const [driveVideos, setDriveVideos] = useState([]);
+  const [selectDialogOpen, setSelectDialogOpen] = useState(false);
+  const [selectedDriveVideo, setSelectedDriveVideo] = useState(null); // { id, name }
   const [roomData, setRoomData] = useState({
     name: '',
     description: '',
@@ -81,6 +106,21 @@ const CreateRoom = () => {
       console.log('📦 [CreateRoom] Payload to createRoom:', payload);
       const newRoom = await apiCreateRoom(payload, backendToken);
       console.log('🎉 [CreateRoom] Room created:', newRoom);
+
+      // If user selected a Drive video, set it for the room now
+      if (selectedDriveVideo) {
+        try {
+          console.log('📤 [CreateRoom] Setting selected Drive video for room:', selectedDriveVideo);
+          await setRoomVideo(newRoom.room_id, {
+            video_id: selectedDriveVideo.id,
+            video_name: selectedDriveVideo.name,
+          }, backendToken);
+        } catch (setErr) {
+          console.error('❌ [CreateRoom] Failed to set room video:', setErr);
+          // Continue navigation even if this fails; Theater page can retry
+        }
+      }
+
       navigate(`/theater/${newRoom.room_id}`);
     } catch (err) {
       console.error('❌ [CreateRoom] Failed to create room:', err);
@@ -90,7 +130,62 @@ const CreateRoom = () => {
     }
   };
 
+  // Check Drive connection status
+  useEffect(() => {
+    const checkStatus = async () => {
+      if (!backendToken) return;
+      try {
+        setCheckingDrive(true);
+        const connected = await getGoogleTokensStatus(backendToken);
+        setDriveConnected(connected);
+        if (connected) {
+          // Optionally prefetch videos for smoother UX
+          try {
+            const vids = await fetchDriveVideos(backendToken);
+            setDriveVideos(vids);
+          } catch (e) {
+            console.warn('[CreateRoom] Prefetch Drive videos failed:', e?.message || e);
+          }
+        }
+      } catch (e) {
+        console.warn('[CreateRoom] Drive status check failed:', e?.message || e);
+        setDriveConnected(false);
+      } finally {
+        setCheckingDrive(false);
+      }
+    };
+    checkStatus();
+  }, [backendToken]);
+
+  const handleConnectDrive = async () => {
+    try {
+      if (!backendToken) {
+        setError('Please log in to connect Google Drive.');
+        return;
+      }
+      const url = await getGoogleAuthUrl(backendToken);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      setError(e.message || 'Failed to start Google authorization');
+    }
+  };
+
+  const openSelectFromDrive = async () => {
+    try {
+      if (!backendToken) {
+        setError('Please log in.');
+        return;
+      }
+      const vids = await fetchDriveVideos(backendToken);
+      setDriveVideos(vids);
+      setSelectDialogOpen(true);
+    } catch (e) {
+      setError(e.message || 'Failed to fetch Google Drive videos');
+    }
+  };
+
   return (
+    <>
     <Container maxWidth="md">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -297,17 +392,17 @@ const CreateRoom = () => {
                   </Select>
                 </FormControl>
               </Grid>
-              
-              {roomData.movieSource !== 'uploadLater' && (
+
+              {roomData.movieSource === 'directLink' && (
                 <Grid item xs={12}>
                   <TextField
                     fullWidth
-                    label={roomData.movieSource === 'googleDrive' ? 'Google Drive Link' : 'Direct Video URL'}
+                    label={'Direct Video URL'}
                     name="movieLink"
                     value={roomData.movieLink}
                     onChange={handleChange}
                     variant="outlined"
-                    placeholder={roomData.movieSource === 'googleDrive' ? 'https://drive.google.com/file/d/...' : 'https://example.com/video.mp4'}
+                    placeholder={'https://example.com/video.mp4'}
                     InputProps={{
                       sx: {
                         borderRadius: '8px',
@@ -317,6 +412,34 @@ const CreateRoom = () => {
                       ),
                     }}
                   />
+                </Grid>
+              )}
+
+              {roomData.movieSource === 'googleDrive' && (
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <Button 
+                      variant="outlined"
+                      onClick={handleConnectDrive}
+                      disabled={checkingDrive}
+                    >
+                      {driveConnected ? 'Reconnect Google Drive' : 'Connect Google Drive'}
+                    </Button>
+                    <Button 
+                      variant="contained"
+                      onClick={openSelectFromDrive}
+                      disabled={!driveConnected}
+                    >
+                      Select Video from Drive
+                    </Button>
+                    {selectedDriveVideo && (
+                      <Chip 
+                        label={`Selected: ${selectedDriveVideo.name}`}
+                        onDelete={() => setSelectedDriveVideo(null)}
+                        color="primary"
+                      />
+                    )}
+                  </Box>
                 </Grid>
               )}
               
@@ -357,6 +480,34 @@ const CreateRoom = () => {
         </Box>
       </motion.div>
     </Container>
+    {/* Drive Videos Selection Dialog */}
+    <Dialog key="drive-select" open={selectDialogOpen} onClose={() => setSelectDialogOpen(false)} fullWidth maxWidth="sm">
+      <DialogTitle>Select a video from your Google Drive</DialogTitle>
+      <DialogContent dividers>
+        {driveVideos?.length ? (
+          <List>
+            {driveVideos.map(v => (
+              <ListItem key={v.id} disablePadding>
+                <ListItemButton
+                  onClick={() => {
+                    setSelectedDriveVideo({ id: v.id, name: v.name });
+                    setSelectDialogOpen(false);
+                  }}
+                >
+                  <ListItemText primary={v.name} secondary={v.mimeType || ''} />
+                </ListItemButton>
+              </ListItem>
+            ))}
+          </List>
+        ) : (
+          <Typography variant="body2" color="text.secondary">No videos found in Drive.</Typography>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={() => setSelectDialogOpen(false)}>Close</Button>
+      </DialogActions>
+    </Dialog>
+    </>
   );
 };
 
