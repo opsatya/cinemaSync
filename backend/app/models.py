@@ -225,6 +225,59 @@ class UserToken:
             print(f"❌ Error getting tokens: {e}")
             return None
 
+# User management model for persistent user data
+class User:
+    """User management model for persistent user data"""
+    collection_name = 'users'
+    
+    @staticmethod
+    def get_collection():
+        """Get the MongoDB collection for users"""
+        try:
+            if db is None:
+                init_db()
+            collection = db[User.collection_name]
+            return collection
+        except Exception as e:
+            print(f"❌ Error getting User collection: {e}")
+            raise e
+    
+    @staticmethod
+    def upsert_user(user_data):
+        """Create or update user profile"""
+        try:
+            collection = User.get_collection()
+            
+            user_record = {
+                'user_id': user_data['user_id'],
+                'name': user_data.get('name'),
+                'email': user_data.get('email'),
+                'updated_at': datetime.utcnow(),
+                'last_login': datetime.utcnow()
+            }
+            
+            result = collection.update_one(
+                {'user_id': user_data['user_id']},
+                {'$set': user_record, '$setOnInsert': {'created_at': datetime.utcnow()}},
+                upsert=True
+            )
+            
+            return result.acknowledged
+        except Exception as e:
+            print(f"❌ Error upserting user: {e}")
+            return False
+    
+    @staticmethod
+    def get_user(user_id):
+        """Get user by ID"""
+        try:
+            collection = User.get_collection()
+            doc = collection.find_one({'user_id': user_id})
+            return serialize_document(doc)
+        except Exception as e:
+            print(f"❌ Error getting user: {e}")
+            return None
+
 # Room model for movie watching sessions
 class Room:
     """Helper class for room operations"""
@@ -375,55 +428,44 @@ class Room:
     
     @staticmethod
     def find_by_user_id(user_id):
-        """Find all active rooms a user is a participant in OR hosting."""
+        """Find all rooms a user is a participant in OR hosting (active or inactive)."""
         try:
-            print(f"🔍 Finding rooms for user_id: {user_id}")
+            print(f"🔍 Finding rooms for user_id: {user_id} (type: {type(user_id).__name__})")
             collection = Room.get_collection()
             
-            # Query to find rooms where user is host or participant
+            # Convert user_id to string for consistent matching
+            user_id_str = str(user_id)
+            print(f"   Converted user_id_str: '{user_id_str}'")
+            
+            # Enhanced query with type handling (no active filter for my-rooms)
             query = {
                 '$or': [
-                    {'host_id': user_id},  # User is the host
-                    {'participants.user_id': user_id},  # User is in participants
-                ],
-                'is_active': True
+                    {'host_id': user_id_str},
+                    {'host_id': user_id},
+                    {'participants': {'$elemMatch': {'user_id': user_id_str}}},
+                    {'participants': {'$elemMatch': {'user_id': user_id}}}
+                ]
             }
             
-            print(f"   MongoDB query: {query}")
+            print(f"   All rooms query: {query}")
             
             cursor = collection.find(query).sort('updated_at', -1)
             rooms = [serialize_document(doc) for doc in cursor]
             
-            print(f"   Query returned {len(rooms)} rooms")
+            print(f"   All rooms found (including inactive): {len(rooms)}")
             
-            if len(rooms) == 0:
-                print("   No rooms found - running diagnostic queries...")
-                
-                # Diagnostic: Check total rooms in database
-                total_rooms = collection.count_documents({})
-                print(f"   Total rooms in database: {total_rooms}")
-                
-                # Diagnostic: Check rooms by host_id only
-                host_rooms = collection.count_documents({'host_id': user_id})
-                print(f"   Rooms where user is host: {host_rooms}")
-                
-                # Diagnostic: Check active rooms
-                active_rooms = collection.count_documents({'is_active': True})
-                print(f"   Active rooms in database: {active_rooms}")
-                
-                # Diagnostic: Show sample room data
-                sample_room = collection.find_one({})
-                if sample_room:
-                    print(f"   Sample room structure:")
-                    print(f"     room_id: {sample_room.get('room_id', 'N/A')}")
-                    print(f"     host_id: {sample_room.get('host_id', 'N/A')} (type: {type(sample_room.get('host_id')).__name__})")
-                    print(f"     participants: {len(sample_room.get('participants', []))} items")
-                    if sample_room.get('participants'):
-                        print(f"     first participant: {sample_room['participants'][0]}")
-                
-                # Diagnostic: Check user_id type consistency
-                print(f"   Searching user_id type: {type(user_id).__name__}")
-                print(f"   Searching user_id value: '{user_id}'")
+            # Diagnostic: Count active only
+            host_count_active = collection.count_documents({'host_id': user_id_str, 'is_active': True})
+            print(f"   Active host rooms: {host_count_active}")
+            
+            # Diagnostic: Sample room data if any found
+            if rooms:
+                sample = rooms[0]
+                print(f"   Sample room: room_id={sample.get('room_id')}, is_active={sample.get('is_active')}")
+                print(f"   Sample host_id: '{sample.get('host_id')}' (type: {type(sample.get('host_id')).__name__})")
+                if sample.get('participants'):
+                    sample_part = sample['participants'][0]
+                    print(f"   Sample participant user_id: '{sample_part.get('user_id')}' (type: {type(sample_part.get('user_id')).__name__})")
             
             return rooms
             
