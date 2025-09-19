@@ -107,21 +107,33 @@ def tokens_status():
 @google_bp.route('/auth/callback', methods=['GET'])
 def auth_callback():
     try:
+        print(f"🔐 OAUTH CALLBACK: Starting callback handling")
         code = request.args.get('code')
         state_value = request.args.get('state')
+        print(f"   Code received: {'***' if code else 'MISSING'}")
+        print(f"   State received: {state_value}")
         if not code:
+            print("   ❌ Missing code - returning 400")
             return jsonify({'success': False, 'message': 'Missing code'}), 400
 
+        print("   Building flow...")
         flow = _build_flow()
+        print("   Fetching token from code...")
         flow.fetch_token(code=code)
         creds = flow.credentials
+        print(f"   Token fetch successful - access_token: {'***' if creds.token else 'MISSING'}")
+        print(f"   Refresh token: {'***' if getattr(creds, 'refresh_token', None) else 'MISSING'}")
 
         # Determine user
+        print(f"   Extracting user_id from state: {state_value}")
         user_id = _extract_user_id_from_state(state_value)
         if not user_id:
             # As a last resort, allow ?user_id= in callback
             user_id = request.args.get('user_id')
+            print(f"   Fallback user_id from query: {user_id}")
+        print(f"   Final user_id: {user_id}")
         if not user_id:
+            print("   ❌ Unable to determine user_id - returning 400")
             return jsonify({'success': False, 'message': 'Unable to associate user for tokens'}), 400
 
         token_data = {
@@ -131,17 +143,26 @@ def auth_callback():
             'scope': ' '.join(SCOPES),
             'expiry': creds.expiry.isoformat() if getattr(creds, 'expiry', None) else None
         }
+        print(f"   Prepared token_data keys: {list(token_data.keys())}")
 
-        UserToken.save_tokens(user_id, 'google', token_data)
+        print("   Saving tokens to database...")
+        saved = UserToken.save_tokens(user_id, 'google', token_data)
+        print(f"   Tokens saved: {saved}")
 
         # You can redirect back to the frontend with a success flag
         frontend_redirect = os.getenv('OAUTH_SUCCESS_REDIRECT')
         if frontend_redirect:
             query = urlencode({'status': 'success'})
+            print(f"   Redirecting to: {frontend_redirect}?{query}")
             return redirect(f"{frontend_redirect}?{query}")
 
+        print("   Returning JSON success")
         return jsonify({'success': True})
     except Exception as e:
+        print(f"❌ OAUTH CALLBACK ERROR: {str(e)}")
+        print(f"   Error type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @google_bp.route('/health', methods=['GET'])

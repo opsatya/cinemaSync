@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request, g
-from app.models import Room
+from app.models import Room, UserToken
 from app.auth_middleware import token_required  # IMPORT THE MIDDLEWARE
+from app.drive_service import DriveService
 import os
 import traceback
 import sys
@@ -635,4 +636,99 @@ def debug_user_rooms_detailed(user_id):
             'error': error_msg, 
             'user_id': user_id,
             'error_type': type(e).__name__
+        }), 500
+
+@room_bp.route('/videos/drive', methods=['GET'])
+@token_required
+def get_user_drive_videos():
+    """Get user's Google Drive videos"""
+    try:
+        user_id = g.current_user_id
+        
+        # Get user's Google Drive tokens
+        tokens = UserToken.get_tokens(user_id, 'google')
+        
+        if not tokens or not tokens.get('access_token'):
+            return jsonify({
+                'success': False,
+                'message': 'Google Drive not connected. Please connect your Google Drive account first.'
+            }), 401
+        
+        # Use DriveService to list user videos
+        drive_service = DriveService()
+        videos = drive_service.list_user_videos(user_id)
+        
+        return jsonify({
+            'success': True,
+            'videos': videos
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error getting user drive videos: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 500
+
+@room_bp.route('/<room_id>/video', methods=['POST'])
+@token_required 
+def set_room_video(room_id):
+    """Set video for room (only host can do this)"""
+    try:
+        user_id = g.current_user_id
+        data = request.get_json()
+        
+        if not data or not data.get('video_id'):
+            return jsonify({
+                'success': False,
+                'message': 'Video ID is required'
+            }), 400
+        
+        room = Room.find_by_id(room_id)
+        if not room:
+            return jsonify({
+                'success': False,
+                'message': 'Room not found'
+            }), 404
+            
+        if room.get('host_id') != user_id:
+            return jsonify({
+                'success': False,
+                'message': 'Only room host can set video'
+            }), 403
+        
+        # Update room with new video
+        collection = Room.get_collection()
+        result = collection.update_one(
+            {'room_id': room_id},
+            {'$set': {
+                'movie_source': {
+                    'type': 'google_drive',
+                    'video_id': data['video_id'],
+                    'video_name': data.get('video_name', '')
+                },
+                'updated_at': datetime.utcnow()
+            }}
+        )
+        
+        if result.modified_count > 0:
+            return jsonify({
+                'success': True,
+                'message': 'Video updated successfully'
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'Failed to update video'
+            }), 500
+            
+    except Exception as e:
+        print(f"❌ Error setting room video: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': str(e)
         }), 500

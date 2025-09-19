@@ -30,6 +30,15 @@ def exchange_token():
         if not user_id:
             return jsonify({'success': False, 'message': 'Token is invalid (missing uid)'}), 401
 
+        # Store/update user data for persistence
+        from .models import User
+        user_data = {
+            'user_id': user_id,
+            'name': decoded_token.get('name'),
+            'email': decoded_token.get('email')
+        }
+        User.upsert_user(user_data)
+
         now = datetime.utcnow()
         payload = {
             'user_id': user_id,
@@ -43,7 +52,8 @@ def exchange_token():
 
         return jsonify({
             'success': True,
-            'token': token
+            'token': token,
+            'user': user_data
         }), 200
     except Exception as e:
         return jsonify({

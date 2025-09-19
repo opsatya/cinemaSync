@@ -12,6 +12,60 @@ from googleapiclient.errors import HttpError
 import io
 import re
 
+def get_user_videos(access_token):
+    """Get user's Google Drive video files"""
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        creds = Credentials(token=access_token)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Query for video files only
+        query = "mimeType contains 'video/' and trashed=false"
+        
+        results = drive_service.files().list(
+            q=query,
+            fields="files(id, name, mimeType, size, createdTime)",
+            pageSize=50
+        ).execute()
+        
+        videos = results.get('files', [])
+        
+        return [{
+            'id': video['id'],
+            'name': video['name'],
+            'mimeType': video['mimeType'],
+            'size': video.get('size'),
+            'createdTime': video.get('createdTime')
+        } for video in videos]
+        
+    except Exception as e:
+        print(f"❌ Error getting user videos: {e}")
+        return []
+
+def get_video_stream_url(video_id, access_token):
+    """Get streamable URL for video"""
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        creds = Credentials(token=access_token)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # Get file metadata and download URL
+        file_info = drive_service.files().get(
+            fileId=video_id,
+            fields="webContentLink, webViewLink"
+        ).execute()
+        
+        return {
+            'stream_url': f"https://drive.google.com/file/d/{video_id}/preview",
+            'download_url': file_info.get('webContentLink')
+        }
+        
+    except Exception as e:
+        print(f"❌ Error getting video stream URL: {e}")
+        return None
+
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://127.0.0.1:5000/api')
 
@@ -133,7 +187,7 @@ class DriveService:
         try:
             # If no folder_id is provided, use the root folder or the configured default folder
             if not folder_id:
-                folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', 'root')
+                folder_id = 'root'
             
             # Query parameters
             query = f"'{folder_id}' in parents and trashed = false"
