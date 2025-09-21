@@ -517,10 +517,13 @@ def update_playback_state(room_id):
                 'message': error_msg
             }), 404
         
-        if room.get('host_id') != g.current_user_id:
+        # Normalize types for reliable comparison
+        room_host = str(room.get('host_id')) if room.get('host_id') is not None else None
+        current_user = str(g.current_user_id) if g.current_user_id is not None else None
+        if room_host != current_user:
             error_msg = 'Only room host can control playback'
             print(f"❌ Error: {error_msg}")
-            print(f"   Room host: {room.get('host_id')}, Current user: {g.current_user_id}")
+            print(f"   Room host: {room_host}, Current user: {current_user}")
             return jsonify({
                 'success': False,
                 'message': error_msg

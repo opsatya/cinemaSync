@@ -1,9 +1,10 @@
-from flask import Blueprint, jsonify, request, current_app, redirect, url_for, Response
+from flask import Blueprint, jsonify, request, current_app, redirect, url_for, Response, g
 from app.drive_service import DriveService
 from app.models import MovieMetadata
-from app.room_routes import token_required
+from app.auth_middleware import token_required
 import io
 import os
+import jwt
 from datetime import datetime
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -146,7 +147,7 @@ def stream_file(file_id):
 
         # Indicate support for simple range requests (client can still seek within the video)
         response.headers.set('Accept-Ranges', 'bytes')
-        response.headers.set('Content-Disposition', f'inline; filename="{file_metadata.get('name', 'video.mp4')}"')
+        response.headers.set('Content-Disposition', f'inline; filename="{file_metadata.get("name", "video.mp4")}"')
         
         # Save metadata to MongoDB if available
         try:
@@ -264,9 +265,10 @@ def get_recent_movies():
 
 @api_bp.route('/drive/files', methods=['GET'])
 @token_required
-def list_user_files(user_id):
+def list_user_files():
     """List user-owned video files accessible to the app"""
     try:
+        user_id = g.current_user_id
         files = drive_service.list_user_videos(user_id)
         return jsonify({'success': True, 'files': files, 'count': len(files)}), 200
     except Exception as e:
@@ -274,9 +276,11 @@ def list_user_files(user_id):
 
 @api_bp.route('/drive/upload', methods=['POST'])
 @token_required
-def upload_user_file(user_id):
+def upload_user_file():
     """Upload a file to the user's Google Drive (expects multipart/form-data)"""
     try:
+        user_id = g.current_user_id
+
         if 'file' not in request.files:
             return jsonify({'success': False, 'message': 'No file uploaded'}), 400
         file_storage = request.files['file']

@@ -67,7 +67,11 @@ def get_video_stream_url(video_id, access_token):
         return None
 
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
-API_BASE_URL = os.getenv('API_BASE_URL', 'http://127.0.0.1:5000/api')
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:5000/api')
+
+# Enforce a real secret in production to prevent token forgery
+if os.getenv('FLASK_ENV') == 'production' and JWT_SECRET == 'your-secret-key':
+    raise RuntimeError('JWT_SECRET must be set via environment in production')
 
 def get_google_auth_url(user_id):
     state = jwt.encode({'user_id': user_id}, JWT_SECRET, algorithm='HS256')

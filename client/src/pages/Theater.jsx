@@ -114,8 +114,28 @@ const Theater = () => {
         console.log('[DEBUG] room.host_id:', roomDetails?.host_id);
         console.log('[DEBUG] isHost:', checkIfHost(roomDetails, currentUser?.uid));
         
-        if (roomDetails.movie_source && roomDetails.movie_source.type === 'googleDrive' && roomDetails.movie_source.value) {
-          setSelectedMovie({ id: roomDetails.movie_source.value, name: 'Movie' });
+        if (roomDetails.movie_source) {
+          const ms = roomDetails.movie_source;
+          const type = String(ms.type || '').toLowerCase();
+
+          // Support both frontend 'googleDrive' and backend 'google_drive'
+          if (type === 'googledrive' || type === 'google_drive') {
+            const driveId = ms.value || ms.video_id;
+            if (driveId) {
+              setSelectedMovie({ kind: 'drive', id: driveId, name: ms.video_name || 'Movie' });
+            }
+          } else if (type === 'directlink') {
+            const url = ms.value;
+            if (url) {
+              // Detect YouTube links and extract ID; otherwise treat as a direct MP4/stream URL
+              const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{6,})/i);
+              if (ytMatch && ytMatch[1]) {
+                setSelectedMovie({ kind: 'youtube', id: ytMatch[1], url, name: 'YouTube Video' });
+              } else {
+                setSelectedMovie({ kind: 'direct', url, name: 'Direct Video' });
+              }
+            }
+          }
         }
         
         // Check if room requires password
@@ -576,11 +596,25 @@ const Theater = () => {
                 }}
               >
                 {selectedMovie ? (
-                  <VideoPlayer 
-                    isPlaying={isPlaying} 
-                    isMuted={isMuted} 
-                    fileId={selectedMovie.id}
-                    src={`https://drive.google.com/file/d/${selectedMovie.id}/preview`}
+                  <VideoPlayer
+                    isPlaying={isPlaying}
+                    isMuted={isMuted}
+                    fileId={
+                      selectedMovie?.kind
+                        ? (selectedMovie.kind === 'drive' ? selectedMovie.id : null)
+                        : (selectedMovie?.id || null)
+                    }
+                    src={
+                      selectedMovie?.kind
+                        ? (selectedMovie.kind === 'drive'
+                            ? `https://drive.google.com/file/d/${selectedMovie.id}/preview`
+                            : selectedMovie.kind === 'youtube'
+                              ? `https://www.youtube.com/embed/${selectedMovie.id}`
+                              : selectedMovie.url)
+                        : (selectedMovie?.id
+                            ? `https://drive.google.com/file/d/${selectedMovie.id}/preview`
+                            : null)
+                    }
                     currentTime={currentTime}
                     onTimeUpdate={setCurrentTime}
                   />

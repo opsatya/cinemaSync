@@ -47,7 +47,18 @@ const MyRooms = () => {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [favoriteRooms, setFavoriteRooms] = useState([1, 3]); // IDs of favorited rooms
+  // Persist favorites in localStorage using stable string room IDs
+  const getInitialFavorites = () => {
+    try {
+      const raw = localStorage.getItem('favoriteRooms');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+  const [favoriteRooms, setFavoriteRooms] = useState(getInitialFavorites()); // string room IDs
 
   useEffect(() => {
     const loadRooms = async () => {
@@ -69,6 +80,13 @@ const MyRooms = () => {
     };
     loadRooms();
   }, [backendToken]);
+  
+  // Persist favorites whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('favoriteRooms', JSON.stringify(favoriteRooms));
+    } catch {}
+  }, [favoriteRooms]);
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -87,10 +105,12 @@ const MyRooms = () => {
   };
 
   const toggleFavorite = (roomId) => {
-    if (favoriteRooms.includes(roomId)) {
-      setFavoriteRooms(favoriteRooms.filter(id => id !== roomId));
+    const key = String(roomId || '');
+    if (!key) return;
+    if (favoriteRooms.includes(key)) {
+      setFavoriteRooms(favoriteRooms.filter(id => id !== key));
     } else {
-      setFavoriteRooms([...favoriteRooms, roomId]);
+      setFavoriteRooms([...favoriteRooms, key]);
     }
   };
 
@@ -101,7 +121,7 @@ const MyRooms = () => {
                           room.description?.toLowerCase().includes(searchQuery.toLowerCase());
       
       if (tabValue === 0) return matchesSearch; // All rooms
-      if (tabValue === 1) return matchesSearch && favoriteRooms.includes(room.room_id || room.id); // Favorites
+      if (tabValue === 1) return matchesSearch && favoriteRooms.includes(String(room.room_id || room.id)); // Favorites
       if (tabValue === 2) return matchesSearch && new Date(room.created_at) > new Date(Date.now() - 7 * 24 * 60 * 60 * 1000); // Recent (last 7 days)
       
       return matchesSearch;
@@ -238,8 +258,8 @@ const MyRooms = () => {
                 <Grid container spacing={{ xs: 2, sm: 3 }}>
                   {filteredRooms.map((room) => {
                     // Create a unique key using room_id, id, or fallback to index
-                    const roomKey = room.room_id || room.id || `room-${Math.random()}`;
-                    const roomId = room.room_id || room.id;
+                    const roomKey = String(room.room_id || room.id || `room-${Math.random()}`);
+                    const roomId = String(room.room_id || room.id || '');
                     
                     return (
                       <Grid item xs={12} sm={6} lg={4} key={roomKey}>

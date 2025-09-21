@@ -28,9 +28,28 @@ load_dotenv()
 def create_app():
     app = Flask(__name__)
     
-    # Configure CORS properly with explicit options
-    CORS(app, resources={r"/*": {"origins": "*", "supports_credentials": True}})
-    
+    # Configure CORS with explicit origins and headers for credentials
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    # Optionally include a frontend URL from environment (e.g., production)
+    frontend_url = os.getenv("FRONTEND_URL")
+    if frontend_url:
+        allowed_origins.append(frontend_url.rstrip("/"))
+
+    CORS(
+        app,
+        resources={r"/*": {"origins": allowed_origins}},
+        supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization"],
+        expose_headers=["Content-Type", "Authorization"],
+    )
+
+    # Security checks: warn if default JWT secret is used in production
+    if os.getenv("FLASK_ENV") == "production" and os.getenv("JWT_SECRET", "your-secret-key") == "your-secret-key":
+        print("WARNING: JWT_SECRET is using the default value in production. Set a strong JWT_SECRET in environment variables.")
+
     # Allow both with/without trailing slashes
     app.url_map.strict_slashes = False
     

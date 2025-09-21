@@ -18,7 +18,20 @@ const firebaseConfig = {
 // Check if we have real Firebase config or demo config
 const isDemoConfig = firebaseConfig.projectId === "demo-project";
 if (isDemoConfig) {
-  console.warn('Using demo Firebase configuration. Please set up your Firebase environment variables.');
+  // Hard fail to avoid silent auth/analytics failures
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'unknown-origin';
+  const msg = [
+    'Firebase is using demo configuration. Set real Firebase environment variables in the client .env:',
+    '- VITE_FIREBASE_API_KEY',
+    '- VITE_FIREBASE_AUTH_DOMAIN',
+    '- VITE_FIREBASE_PROJECT_ID',
+    '- VITE_FIREBASE_STORAGE_BUCKET',
+    '- VITE_FIREBASE_MESSAGING_SENDER_ID',
+    '- VITE_FIREBASE_APP_ID',
+    '(optional) VITE_FIREBASE_MEASUREMENT_ID',
+    `Current origin: ${origin}`
+  ].join('\n');
+  throw new Error(msg);
 }
 
 // Initialize Firebase
@@ -35,6 +48,7 @@ try {
     analytics = getAnalytics(app);
   }
 } catch (error) {
+  // Ensure the error is visible and actionable during development
   console.error('Failed to initialize Firebase:', error);
   throw error;
 }

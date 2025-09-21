@@ -19,7 +19,16 @@ def _to_json_safe(obj):
 
 def init_socketio(app):
     """Initialize SocketIO with the Flask app"""
-    socketio.init_app(app, cors_allowed_origins="*")
+    # Align socket CORS with Flask CORS to avoid origin mismatches
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ]
+    frontend_url = os.getenv("FRONTEND_URL")
+    if frontend_url:
+        allowed_origins.append(frontend_url.rstrip("/"))
+
+    socketio.init_app(app, cors_allowed_origins=allowed_origins)
     register_handlers()
     return socketio
 
@@ -165,10 +174,10 @@ def on_update_playback(data):
         participants = room.get('participants', [])
         user_in_room = False
         for participant in participants:
-            if isinstance(participant, dict) and participant.get('user_id') == user_id:
+            if isinstance(participant, dict) and str(participant.get('user_id')) == str(user_id):
                 user_in_room = True
                 break
-            elif isinstance(participant, str) and participant == user_id:
+            elif isinstance(participant, str) and str(participant) == str(user_id):
                 user_in_room = True
                 break
         
@@ -179,7 +188,7 @@ def on_update_playback(data):
         
         # Proper host verification
         room_host_id = room.get('host_id')
-        is_user_host = (room_host_id == user_id)
+        is_user_host = (str(room_host_id) == str(user_id))
         
         print(f"🔍 Host verification: room_host_id={room_host_id}, user_id={user_id}, is_host={is_user_host}")
         

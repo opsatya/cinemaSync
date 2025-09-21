@@ -10,10 +10,17 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
   
   // Prefer an explicit src when provided (e.g., Google Drive preview URL); otherwise fall back to backend stream by fileId
   const streamUrl = src ? src : (fileId ? getDirectStreamUrl(fileId) : null);
+  // Detect YouTube sources to render iframe instead of HTML5 video
+  const isYouTubeSrc = typeof streamUrl === 'string' && /(?:youtube\.com|youtu\.be)/i.test(streamUrl);
+  // Provide a stable origin for YouTube IFrame API to avoid "origins don't match" errors
+  const pageOrigin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
+  const ytSrc = isYouTubeSrc
+    ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}enablejsapi=1&rel=0${pageOrigin ? `&origin=${encodeURIComponent(pageOrigin)}` : ''}`
+    : null;
   
   // Effect to handle play/pause
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && videoRef.current.tagName === 'VIDEO') {
       if (isPlaying) {
         setLoading(true);
         videoRef.current.play().catch(err => {
@@ -26,13 +33,15 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
         videoRef.current.pause();
       }
     }
+    // Note: YouTube iframe playback is not controlled via HTML5 video API.
   }, [isPlaying]);
   
   // Effect to handle mute/unmute
   useEffect(() => {
-    if (videoRef.current) {
+    if (videoRef.current && videoRef.current.tagName === 'VIDEO') {
       videoRef.current.muted = isMuted;
     }
+    // Note: Muting a YouTube iframe requires the YouTube IFrame API; not handled here.
   }, [isMuted]);
   
   // Handle video errors
@@ -69,8 +78,8 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
     >
       {streamUrl ? (
         <>
-          {loading && (
-            <Box 
+          {loading && !isYouTubeSrc && (
+            <Box
               sx={{
                 position: 'absolute',
                 top: 0,
@@ -88,8 +97,8 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
             </Box>
           )}
           
-          {error && (
-            <Box 
+          {error && !isYouTubeSrc && (
+            <Box
               sx={{
                 position: 'absolute',
                 top: 0,
@@ -108,12 +117,12 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
               <Typography variant="h6" color="error" gutterBottom>
                 {error}
               </Typography>
-              <Button 
-                variant="contained" 
-                color="primary" 
+              <Button
+                variant="contained"
+                color="primary"
                 onClick={() => {
                   setError(null);
-                  if (videoRef.current) {
+                  if (videoRef.current && videoRef.current.tagName === 'VIDEO') {
                     videoRef.current.load();
                   }
                 }}
@@ -123,22 +132,32 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
               </Button>
             </Box>
           )}
-          
-          <video
-            ref={videoRef}
-            style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'contain',
-            }}
-            controls={false}
-            playsInline
-            onError={handleVideoError}
-          >
-            {/* Let the browser infer MIME type to support various formats */}
-            <source src={streamUrl} />
-            Your browser does not support the video tag.
-          </video>
+
+          {isYouTubeSrc ? (
+            <iframe
+              title="YouTube Player"
+              src={ytSrc}
+              style={{ width: '100%', height: '100%', border: 0 }}
+              allow="autoplay; encrypted-media; picture-in-picture"
+              allowFullScreen
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+              }}
+              controls={false}
+              playsInline
+              onError={handleVideoError}
+            >
+              {/* Let the browser infer MIME type to support various formats */}
+              <source src={streamUrl} />
+              Your browser does not support the video tag.
+            </video>
+          )}
         </>
       ) : (
         <Box

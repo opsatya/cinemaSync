@@ -4,6 +4,9 @@ from functools import wraps
 from flask import request, jsonify, g
 
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
+# Enforce a real secret in production to prevent token forgery
+if os.getenv('FLASK_ENV') == 'production' and JWT_SECRET == 'your-secret-key':
+    raise RuntimeError('JWT_SECRET must be set via environment in production')
 
 def token_required(f):
     @wraps(f)

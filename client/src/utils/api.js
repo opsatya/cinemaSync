@@ -1,5 +1,14 @@
 // API service for CinemaSync
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:5000/api';
+const API_BASE_URL = (() => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && typeof envUrl === 'string') return envUrl;
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    // Fallback to same-origin /api to avoid 127.0.0.1 vs localhost mismatch
+    return `${window.location.origin.replace(/\/$/, '')}/api`;
+  }
+  // Final fallback
+  return 'http://localhost:5000/api';
+})();
 const DEBUG = import.meta.env.VITE_DEBUG_LOGS === 'true';
 
 // Helper to create authenticated headers

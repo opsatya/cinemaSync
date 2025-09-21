@@ -161,6 +161,57 @@ class MovieMetadata:
             print(f"❌ Error getting recent movies: {e}")
             return []
 
+    @staticmethod
+    def save_metadata(metadata):
+        """Upsert movie metadata into MongoDB by file_id/id"""
+        try:
+            if not metadata:
+                print("⚠️ save_metadata called with empty metadata")
+                return False
+
+            collection = MovieMetadata.get_collection()
+
+            # Determine file identifier
+            file_id = metadata.get('file_id') or metadata.get('id')
+            if not file_id:
+                print("⚠️ save_metadata missing file_id/id, skipping")
+                return False
+
+            # Ensure index for faster lookups and uniqueness
+            try:
+                collection.create_index('file_id', unique=True)
+            except Exception as idx_err:
+                print(f"ℹ️ Index ensure warning (file_id): {idx_err}")
+
+            # Normalize document
+            doc = {
+                'file_id': file_id,
+                'id': file_id,
+                'name': metadata.get('name'),
+                'mimeType': metadata.get('mimeType'),
+                'size': metadata.get('size'),
+                'thumbnailLink': metadata.get('thumbnailLink'),
+                'type': metadata.get('type', 'video'),
+                'updated_at': datetime.utcnow(),
+            }
+
+            # Optional passthrough fields
+            for k in ('createdTime', 'modifiedTime', 'parent_folder_id', 'webContentLink'):
+                if metadata.get(k) is not None:
+                    doc[k] = metadata.get(k)
+
+            result = collection.update_one(
+                {'file_id': file_id},
+                {'$set': doc, '$setOnInsert': {'created_at': datetime.utcnow()}},
+                upsert=True
+            )
+
+            print(f"✅ save_metadata upserted: matched={result.matched_count}, modified={result.modified_count}, upserted_id={result.upserted_id}")
+            return result.acknowledged
+        except Exception as e:
+            print(f"❌ Error saving movie metadata: {e}")
+            return False
+
 # OAuth tokens per user for Google Drive access
 class UserToken:
     """Store OAuth credentials (access + refresh tokens) per user"""
@@ -175,6 +226,15 @@ class UserToken:
                 init_db()
             collection = db[UserToken.collection_name]
             print(f"🔍 Got UserToken collection: {collection.name}")
+            # Ensure useful indexes
+            try:
+                collection.create_index([('user_id', 1), ('provider', 1)], unique=True)
+            except Exception as e:
+                print(f"ℹ️ Index ensure warning (user_id+provider unique): {e}")
+            try:
+                collection.create_index('user_id')
+            except Exception as e:
+                print(f"ℹ️ Index ensure warning (user_id): {e}")
             return collection
         except Exception as e:
             print(f"❌ Error getting UserToken collection: {e}")
@@ -188,7 +248,7 @@ class UserToken:
             collection = UserToken.get_collection()
             
             token_record = {
-                'user_id': user_id,
+                'user_id': str(user_id),
                 'provider': provider,
                 'access_token': token_data.get('access_token'),
                 'refresh_token': token_data.get('refresh_token'),
@@ -200,7 +260,7 @@ class UserToken:
             
             # Upsert on user_id + provider
             result = collection.update_one(
-                {'user_id': user_id, 'provider': provider},
+                {'user_id': str(user_id), 'provider': provider},
                 {'$set': token_record, '$setOnInsert': {'created_at': datetime.utcnow()}},
                 upsert=True
             )
@@ -217,7 +277,7 @@ class UserToken:
         try:
             print(f"🔐 Getting tokens for user: {user_id}, provider: {provider}")
             collection = UserToken.get_collection()
-            doc = collection.find_one({'user_id': user_id, 'provider': provider})
+            doc = collection.find_one({'user_id': str(user_id), 'provider': provider})
             result = serialize_document(doc)
             print(f"   Found tokens: {bool(result)}")
             return result
@@ -237,6 +297,11 @@ class User:
             if db is None:
                 init_db()
             collection = db[User.collection_name]
+            # Ensure index for user_id lookups
+            try:
+                collection.create_index('user_id', unique=True)
+            except Exception as e:
+                print(f"ℹ️ Index ensure warning (users.user_id unique): {e}")
             return collection
         except Exception as e:
             print(f"❌ Error getting User collection: {e}")
@@ -297,6 +362,20 @@ class Room:
             print(f"   Got collection: {collection.name}")
             print(f"   Database: {collection.database.name}")
             
+            # Ensure indexes for performance and consistency
+            try:
+                collection.create_index('room_id', unique=True)
+            except Exception as e:
+                print(f"   Index ensure warning (room_id unique): {e}")
+            try:
+                collection.create_index('host_id')
+            except Exception as e:
+                print(f"   Index ensure warning (host_id): {e}")
+            try:
+                collection.create_index('participants.user_id')
+            except Exception as e:
+                print(f"   Index ensure warning (participants.user_id): {e}")
+            
             # Test collection access
             count = collection.count_documents({})
             print(f"   Collection has {count} documents")
@@ -335,7 +414,7 @@ class Room:
             # Create room document
             room_data = {
                 'room_id': room_id,
-                'host_id': data['host_id'],
+                'host_id': str(data['host_id']),
                 'name': data.get('name', f"Room {room_id}"),
                 'description': data.get('description', ''),
                 'movie_source': data['movie_source'],
@@ -345,7 +424,7 @@ class Room:
                 'enable_reactions': data.get('enable_reactions', True),
                 'max_participants': data.get('max_participants', 10),
                 'participants': [{
-                    'user_id': data['host_id'],
+                    'user_id': str(data['host_id']),
                     'is_host': True,
                     'joined_at': datetime.utcnow()
                 }],
@@ -492,7 +571,7 @@ class Room:
                 
             # Check if user is already in the room
             for participant in room_doc.get('participants', []):
-                if participant.get('user_id') == user_id:
+                if str(participant.get('user_id')) == str(user_id):
                     print(f"   User already in room")
                     return serialize_document(room_doc)
                     
@@ -506,7 +585,7 @@ class Room:
                 
             # Add participant
             new_participant = {
-                'user_id': user_id,
+                'user_id': str(user_id),
                 'is_host': False,
                 'joined_at': datetime.utcnow()
             }
@@ -608,7 +687,7 @@ class Room:
             # Remove participant
             result = collection.update_one(
                 {'room_id': room_id},
-                {'$pull': {'participants': {'user_id': user_id}}}
+                {'$pull': {'participants': {'user_id': str(user_id)}}}
             )
             
             print(f"   Remove result: matched={result.matched_count}, modified={result.modified_count}")

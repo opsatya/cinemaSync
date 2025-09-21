@@ -1,17 +1,18 @@
 import { io } from 'socket.io-client';
 
-// Resolve socket URL: prefer explicit VITE_SOCKET_URL; else derive from API base URL; else fallback
-let SOCKET_URL = import.meta.env.VITE_SOCKET_URL;
-if (!SOCKET_URL) {
-  const apiBase = import.meta.env.VITE_API_BASE_URL;
-  try {
-    if (apiBase) {
-      const origin = new URL(apiBase).origin;
-      SOCKET_URL = origin;
-    }
-  } catch (_) {}
+// Resolve socket URL: prefer explicit VITE_SOCKET_URL; else backend API origin; else same-origin; else fallback
+const envSocket = import.meta.env.VITE_SOCKET_URL;
+const apiBase = import.meta.env.VITE_API_BASE_URL;
+let apiOrigin = null;
+try {
+  if (apiBase) apiOrigin = new URL(apiBase).origin;
+} catch (_) {}
+let SOCKET_URL = envSocket || apiOrigin || (typeof window !== 'undefined' && window.location?.origin ? window.location.origin : null) || 'http://localhost:5000';
+
+if (import.meta.env.VITE_DEBUG_LOGS === 'true') {
+  // eslint-disable-next-line no-console
+  console.log('[Socket] Resolved SOCKET_URL =', SOCKET_URL);
 }
-if (!SOCKET_URL) SOCKET_URL = 'http://127.0.0.1:5000';
 
 
 export const socket = io(SOCKET_URL, {

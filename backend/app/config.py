@@ -15,7 +15,7 @@ class Config:
     GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
     
     # API settings
-    API_BASE_URL = os.getenv('API_BASE_URL', 'http://127.0.0.1:5000/api')
+    API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:5000/api')
     
     # Cache settings
     CACHE_DURATION = int(os.getenv('CACHE_DURATION', 300))  # 5 minutes by default
