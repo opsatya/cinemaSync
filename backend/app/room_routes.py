@@ -692,33 +692,58 @@ def get_user_drive_videos():
         }), 500
 
 @room_bp.route('/<string:room_id>/video', methods=['POST'])
-@token_required 
+@token_required
 def set_room_video(room_id):
-    """Set video for room (only host can do this)"""
+    """Set video for room (only host can do this). Accepts JSON body with { video_id, video_name }."""
     try:
         user_id = g.current_user_id
-        data = request.get_json()
-        
+
+        # Robust JSON parsing (similar to create_room)
+        data = None
+        parse_steps = []
+        try:
+            data = request.get_json(silent=True)
+            parse_steps.append('request.get_json(silent=True)')
+        except Exception as json_error:
+            parse_steps.append(f'get_json exception: {type(json_error).__name__}: {str(json_error)}')
+            data = None
+
+        if data is None:
+            raw_body = request.get_data(cache=False, as_text=True) or ''
+            parse_steps.append(f'raw_body_length={len(raw_body)}')
+            if raw_body.strip():
+                try:
+                    data = json.loads(raw_body)
+                    parse_steps.append('json.loads(raw_body) success')
+                except json.JSONDecodeError as e:
+                    return jsonify({
+                        'success': False,
+                        'message': f'Invalid JSON: {e.msg} at pos {e.pos}'
+                    }), 400
+            elif request.form:
+                data = request.form.to_dict(flat=True)
+                parse_steps.append('parsed request.form')
+
         if not data or not data.get('video_id'):
             return jsonify({
                 'success': False,
                 'message': 'Video ID is required'
             }), 400
-        
+
         room = Room.find_by_id(room_id)
         if not room:
             return jsonify({
                 'success': False,
                 'message': 'Room not found'
             }), 404
-            
+
         if str(room.get('host_id')) != str(user_id):
             return jsonify({
                 'success': False,
                 'message': 'Only room host can set video'
             }), 403
-        
-        # Update room with new video
+
+        # Update room with new video (normalize to google_drive type)
         collection = Room.get_collection()
         result = collection.update_one(
             {'room_id': room_id},
@@ -731,18 +756,27 @@ def set_room_video(room_id):
                 'updated_at': datetime.utcnow()
             }}
         )
-        
-        if result.modified_count > 0:
-            return jsonify({
-                'success': True,
-                'message': 'Video updated successfully'
-            }), 200
-        else:
+
+        if result.modified_count == 0:
             return jsonify({
                 'success': False,
                 'message': 'Failed to update video'
             }), 500
-            
+
+        # Fetch and return the updated room to clients (aligns with frontend expectations)
+        updated_room = Room.find_by_id(room_id)
+        if updated_room and '_id' in updated_room:
+            del updated_room['_id']
+        if updated_room and 'password' in updated_room:
+            updated_room['password_required'] = updated_room['password'] is not None
+            del updated_room['password']
+
+        return jsonify({
+            'success': True,
+            'message': 'Video updated successfully',
+            'room': updated_room
+        }), 200
+
     except Exception as e:
         print(f"❌ Error setting room video: {e}")
         import traceback

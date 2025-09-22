@@ -14,6 +14,11 @@ class MongoJSONProvider(JSONProvider):
         """Serialize data as JSON."""
         import json
         return json.dumps(obj, default=self._json_serializer, **kwargs)
+
+    def loads(self, s, **kwargs):
+        """Deserialize data from JSON (required for request.get_json)."""
+        import json
+        return json.loads(s, **kwargs)
     
     def _json_serializer(self, o):
         """Custom JSON serializer for MongoDB types."""

@@ -114,28 +114,44 @@ const Theater = () => {
         console.log('[DEBUG] room.host_id:', roomDetails?.host_id);
         console.log('[DEBUG] isHost:', checkIfHost(roomDetails, currentUser?.uid));
         
+        // CRITICAL FIX: Initialize selectedMovie from room.movie_source for Drive or Direct Link
         if (roomDetails.movie_source) {
-          const ms = roomDetails.movie_source;
+          const ms = roomDetails.movie_source || {};
           const type = String(ms.type || '').toLowerCase();
+          const fileId = ms.video_id || ms.value || null;
+          const hasDirectUrl = typeof ms.value === 'string' && /^https?:\/\//i.test(ms.value || '');
 
-          // Support both frontend 'googleDrive' and backend 'google_drive'
+          console.log('🧩 [Theater] movie_source from room:', {
+            type,
+            valuePreview: typeof ms.value === 'string' ? ms.value.slice(0, 64) : ms.value,
+            video_id: ms.video_id,
+            video_name: ms.video_name,
+          });
+
           if (type === 'googledrive' || type === 'google_drive') {
-            const driveId = ms.value || ms.video_id;
-            if (driveId) {
-              setSelectedMovie({ kind: 'drive', id: driveId, name: ms.video_name || 'Movie' });
+            if (fileId) {
+              setSelectedMovie({
+                kind: 'drive',
+                id: fileId,
+                name: ms.video_name || 'Google Drive Video'
+              });
+              console.log('✅ [Theater] Initialized selectedMovie from Drive id/value.');
+            } else {
+              console.warn('⚠️ [Theater] Drive source provided but missing video_id/value.');
             }
           } else if (type === 'directlink') {
-            const url = ms.value;
-            if (url) {
-              // Detect YouTube links and extract ID; otherwise treat as a direct MP4/stream URL
-              const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|shorts\/))([A-Za-z0-9_-]{6,})/i);
-              if (ytMatch && ytMatch[1]) {
-                setSelectedMovie({ kind: 'youtube', id: ytMatch[1], url, name: 'YouTube Video' });
-              } else {
-                setSelectedMovie({ kind: 'direct', url, name: 'Direct Video' });
-              }
+            if (hasDirectUrl) {
+              setSelectedMovie({
+                kind: 'direct',
+                url: ms.value,
+                name: 'Direct Video'
+              });
+              console.log('✅ [Theater] Initialized selectedMovie from Direct Link.');
+            } else {
+              console.warn('⚠️ [Theater] Direct link source missing a valid URL.');
             }
           }
+          // For 'uploadlater' or unknown types, selectedMovie remains null (correct)
         }
         
         // Check if room requires password
@@ -226,6 +242,40 @@ const Theater = () => {
       setIsPlaying(data.room.playback_state.is_playing);
       setCurrentTime(data.room.playback_state.current_time || 0);
       setIsHost(checkIfHost(data.room, currentUser?.uid));
+
+      // Initialize selectedMovie from room data if available (covers Drive and Direct Link)
+      try {
+        const ms = data.room?.movie_source;
+        const t = String(ms?.type || '').toLowerCase();
+        const fileId = ms?.video_id || ms?.value || null;
+        const directUrl = typeof ms?.value === 'string' ? ms.value : null;
+
+        if (t === 'googledrive' || t === 'google_drive') {
+          if (fileId) {
+            setSelectedMovie({
+              kind: 'drive',
+              id: fileId,
+              name: ms?.video_name || 'Google Drive Video'
+            });
+            console.log('✅ [Theater] onRoomJoined initialized selectedMovie from Drive.');
+          } else {
+            console.warn('⚠️ [Theater] onRoomJoined Drive source present but missing file id.');
+          }
+        } else if (t === 'directlink') {
+          if (directUrl) {
+            setSelectedMovie({
+              kind: 'direct',
+              url: directUrl,
+              name: 'Direct Video'
+            });
+            console.log('✅ [Theater] onRoomJoined initialized selectedMovie from Direct Link.');
+          } else {
+            console.warn('⚠️ [Theater] onRoomJoined Direct Link source missing URL.');
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ [Theater] Failed to initialize selectedMovie on room_joined:', e);
+      }
       
       // FIXED: Update join status
       setRoomJoinStatus('joined');
