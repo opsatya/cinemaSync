@@ -1,201 +1,214 @@
-# CinemaSync – Setup, Debugging, and Configuration Guide
+# CinemaSync
 
-This document explains how to configure the client and backend, align authentication origins, set up Firebase and Google OAuth, and run the project in development. It also documents known failure modes and how we addressed them.
+Bringing friends together through movies. This repository contains a full-stack watch‑together experience:
+- A Flask backend (REST + Socket.IO) for rooms, playback sync, Google Drive integration, and authentication.
+- A Vite/React frontend for creating and joining rooms, synchronized playback, chat, reactions, and Drive browsing.
 
-WHAT WAS FIXED
+Repository structure
+- backend/ — Flask API, Google Drive and Firebase integrations, Socket.IO server
+- client/ — Vite + React application (Material UI), Socket.IO client, Google Drive browser
+- backend/.env.example — backend environment template
+- client/.env.example — frontend environment template
 
-Authentication and Origins
-- Vite dev host alignment:
-  - Vite now binds to localhost instead of 127.0.0.1 to match Firebase’s default authorized domains.
-- API/Sockets origin alignment:
-  - The client API base URL falls back to same-origin /api to avoid 127.0.0.1 vs localhost mismatches.
-  - Socket.IO client prefers same-origin or VITE_SOCKET_URL, avoiding mixed-origin issues.
-- Backend CORS:
-  - Explicit allowed origins: http://localhost:5173 and http://127.0.0.1:5173 (plus FRONTEND_URL from env).
-  - Credentials-friendly CORS headers (Authorization added to allowed/exposed headers).
-- Firebase demo config:
-  - The client now fails fast if Firebase uses demo project fallback to prevent silent auth/analytics failures.
+Key features
+- Create private or public rooms, with optional password
+- Choose movies from your personal Google Drive or use a direct video link
+- Host‑controlled synchronized playback for everyone in the room
+- In‑room chat and emoji reactions
+- Drive browser with folders, recent items, search, and “Root” showing your own videos when connected
+- Robust join flow with password handling, UI guardrails, and socket acks
+- Spacebar keyboard shortcut to play/pause (host‑only control enforced)
 
-Rooms REST API
-- Correct routes:
-  - /api/rooms/ for list, /api/rooms/<room_id> for details, /<room_id>/join, /<room_id>/leave, /<room_id>/playback, /<room_id>/video.
-  - No duplicate or double-slash routes.
-- “My Rooms” reliability:
-  - Normalized host_id and participant user_id to string on create/join/leave/remove, preventing type mismatch queries.
-  - Added indexes for performance and query stability (room_id unique, host_id, participants.user_id).
-- Video/set playback host checks:
-  - Normalized ID types in host validation to avoid false “Only host can control playback”.
+Technology
+- Backend: Flask, Flask-SocketIO, MongoDB (PyMongo), Google APIs, Firebase Admin
+- Frontend: React, Vite, Material UI, Socket.IO
+- Realtime: Socket.IO events for joining/leaving, playback sync, chat, reactions, movie changes
 
-Movies and Drive
-- User Drive endpoints:
-  - 401 for missing tokens is preserved with clear messaging.
-  - Movie metadata upsert implemented (MovieMetadata.save_metadata) with unique index on file_id.
+Quick start
 
-Socket.IO
-- Server CORS:
-  - Aligned with Flask CORS using explicit origins (localhost/127.0.0.1 and FRONTEND_URL).
-- Version alignment:
-  - socket.io-client ^4.7.5 in the client with Flask-SocketIO 5.3.6.
-- Host/type equality:
-  - Normalized type equality checks for host and participants.
+Prerequisites
+- Python 3.10+ and pip
+- Node.js 18+ and npm
+- MongoDB running locally or a hosted MongoDB URI
+- Google Cloud OAuth 2.0 credentials (Client ID/Secret)
+- Firebase service account (JSON) for user identity bridging
 
-MongoDB Modeling
-- Indexes:
-  - Rooms: room_id (unique), host_id, participants.user_id.
-  - Users: user_id (unique).
-  - User tokens: compound (user_id + provider) unique.
-- Type normalization:
-  - Stored user IDs are normalized to strings to avoid heterogenous types.
+1) Clone
+git clone <this-repo>
+cd cinemaSync
 
-Client Integration
-- Favorites stability:
-  - MyRooms now uses stable string IDs, persisted in localStorage.
-- API base URL:
-  - Same-origin /api fallback avoids mismatched hosts during dev.
+2) Backend (terminal A)
+- Create venv and install dependencies:
+  - python -m venv backend/.venv
+  - source backend/.venv/bin/activate  (Windows: backend\\.venv\\Scripts\\activate)
+  - pip install -r backend/requirements.txt
+- Create .env:
+  - cp backend/.env.example backend/.env
+  - Fill variables (see “Backend environment variables” below)
+- Run the backend:
+  - python backend/run.py
+  - Server at http://127.0.0.1:5000 (REST base: /api)
+
+3) Frontend (terminal B)
+- Install deps:
+  - cd client
+  - npm install
+- Create .env:
+  - cp .env.example .env
+  - Set VITE_API_BASE_URL=http://127.0.0.1:5000/api
+- Run:
+  - npm run dev
+  - App at http://localhost:5173
+
+Backend environment variables
+- JWT_SECRET — required; set a strong random string
+- MONGODB_URI — e.g., mongodb://localhost:27017
+- MONGODB_DB_NAME — default: cinemasync
+- GOOGLE_APPLICATION_CREDENTIALS — path to a service account file for server-side Drive features (used by service account operations)
+- GOOGLE_CLIENT_ID — OAuth Client ID (for per-user Drive OAuth)
+- GOOGLE_CLIENT_SECRET — OAuth Client Secret
+- FIREBASE_SERVICE_ACCOUNT_KEY — path to Firebase service account JSON
+- API_BASE_URL — public base URL for backend (used by Drive service when generating internal links); default http://localhost:5000
+
+Note: The app no longer relies on a fixed GOOGLE_DRIVE_FOLDER_ID. The Drive “Root” view shows your own Drive videos using your OAuth tokens after connecting Google Drive from the UI.
+
+Frontend environment variables (client/.env)
+- VITE_API_BASE_URL — REST base; e.g., http://127.0.0.1:5000/api
+- VITE_DEBUG_LOGS — optional; set to true for verbose logs
+
+Common workflows
+
+1) Connect Google Drive
+- In the frontend, connect your Drive from Create Room (or the Movie Browser). You will be redirected for OAuth consent. After connecting, the Movie Browser “Root” will list your videos (type=video/*).
+
+2) Create a room
+- Select:
+  - Google Drive: choose a Drive file to set immediately
+  - Direct Link: paste a playable URL (mp4, webm, etc.)
+  - Add Movie Later: create the room without a video
+- Optionally set Private + Password for the room
+- On success you’ll be sent to Theater page, and if a preset video existed (Drive or Direct link) the player will load immediately (no Browse UI)
+
+3) Join a private room
+- You’ll be prompted for the password (if set). Correct password is validated after normalization (trimmed). Socket acks and error messages help you fix mistakes without getting stuck in “joining”.
+
+4) Change movie (host only)
+- Only for Drive rooms. Host can open Movie Browser and pick a different Drive file. A “video_changed” sync event updates all viewers immediately.
+
+5) Keyboard shortcuts
+- Space: toggle play/pause (host-only control enforced; only when joined and a movie is selected)
+
+Project details
+
+Backend (Flask + Socket.IO)
+- Launch entry: backend/run.py
+- REST routes:
+  - backend/app/routes.py — movies list/search/stream/metadata, recent, health
+  - backend/app/room_routes.py — rooms CRUD and playback REST endpoints
+  - backend/app/google_oauth_routes.py — Google OAuth endpoints
+  - backend/app/auth_routes.py — exchange identity for backend JWT
+- Socket.IO:
+  - backend/app/socket_manager.py — connection, join_room, leave_room, update_playback, chat_message, reaction
+  - Acknowledgements (acks) supported for join_room and update_playback; handlers return {'ok': True} or {'error': '...'} for precise errors
+- Models (MongoDB):
+  - backend/app/models.py — Room, MovieMetadata, User, UserToken; includes indexes and helpers
+
+Frontend (Vite + React + MUI)
+- App entry: client/src/main.jsx, client/src/App.jsx
+- Pages: client/src/pages
+  - Theater.jsx — core page for playback, chat, reactions; handles:
+    - Room fetch and join
+    - Password dialog
+    - Movie preset detection (Drive/DirectLink)
+    - Host-only controls (toggle, change movie)
+    - “Browse Movies” hidden when a preset video is present
+    - Spacebar keyboard shortcut to play/pause
+  - CreateRoom.jsx — create room, choose source, connect Drive, set password
+  - MyRooms.jsx — view and manage user rooms; edit/share/delete, and join
+- Components: client/src/components
+  - MovieBrowser.jsx — Drive browsing; Root displays user videos after Drive connection; folders and search supported
+  - VideoPlayer.jsx — HTML5 video or YouTube iframe rendering, lightweight errors/loading UI
+  - ChatPanel.jsx, PlaylistPanel.jsx, theater/UserList.jsx
+
+Key behaviors to know
+- Host-only control: Only host can play/pause or change the movie. The frontend guards these actions and the backend enforces them.
+- Preset movie logic:
+  - Drive or DirectLink set at room creation or via host “Change Movie”:
+    - Theater page loads the video immediately (no Browse button shown by default)
+  - “Add Later” rooms show “Browse Movies” only for the host
+- Robust joins:
+  - Password normalization avoids “Invalid password” false negatives
+  - 10-second join timeout prevents the UI getting stuck; if timed out the join resets with an actionable message
+  - Socket acks reduce generic “error” spam, surfacing precise error messages on client
+
+API and Socket quick reference
+
+Important REST endpoints (abbreviated)
+- GET /api/health — Backend health check
+- GET /api/movies/list — List movies (service account; used for folder navigation)
+- GET /api/movies/recent — Recent movies (Mongo-first fallback, then root)
+- GET /api/movies/search?q=…
+- GET /api/movies/stream/:fileId — Generate a stream URL (proxy)
+- GET /api/rooms/:id — Room details
+- POST /api/rooms/ — Create room
+- POST /api/rooms/:id/video — Set Drive video for room (host only)
+- POST /api/rooms/:id/playback — Update playback via REST (host only) — note: Socket.IO is preferred for realtime updates
+
+Important Socket.IO events (abbreviated)
+- connect, connect_error — connection lifecycle
+- join_room (ack) — Join a room (with password if needed)
+- room_joined — Room snapshot upon join
+- user_joined / user_left — presence updates
+- update_playback (ack) — Host updates play/pause/time; backend broadcasts playback_updated
+- playback_updated — Sync event for all clients
+- video_changed — When host changes the movie
+- error — Generic server errors (unexpected); normal flow uses acks for controlled errors
+
+Troubleshooting
+
+- “Invalid password” when joining private room
+  - Ensure backend restarted with updated normalization
+  - Check you enter the exact password set at room creation
+  - Make sure there are no leading/trailing spaces
+
+- UI stays “Joining…”
+  - The client includes a 10-second timeout; if join does not complete, it resets
+  - Check server logs for room existence and password checks
+  - Verify JWT and CORS (see frontend VITE_API_BASE_URL and backend CORS settings)
+
+- Socket connect_error “while connected”
+  - Benign if already connected; client ignores this and proceeds
+  - Check that your backend is reachable at http://127.0.0.1:5000, and that Socket.IO polling/websocket is not blocked by firewall/VPN
+
+- Drive Root is empty
+  - Ensure you connected Google Drive from the UI for your user
+  - Confirm tokens exist (backend “tokens/status” route) and Google creds are valid
+  - If service account is used, only shared items will appear via service account; use the per-user OAuth path for your own Drive files
+
+- CORS / Base URL mismatch
+  - Set client VITE_API_BASE_URL to http://127.0.0.1:5000/api
+  - CORS is configured in backend/app/__init__.py; allowed origins include localhost:5173 and 127.0.0.1:5173
 
 Security
-- JWT secret warning:
-  - In production, warns if JWT_SECRET is left as default value.
+- Use a strong JWT_SECRET in production
+- Do not commit credentials (service accounts, client secrets, Firebase keys)
+- Prefer TLS/HTTPS in production for both backend and frontend
 
-WHAT STILL REQUIRES ENV/DEPLOY SETUP
+Contributing
+- Fork and open pull requests
+- Please include clear commit messages and test steps
+- For Socket.IO changes, include logs and describe client/ack handling
 
-- Firebase web app credentials:
-  - You must define VITE_FIREBASE_* in client/.env for real authentication.
-- Google Drive service account:
-  - For service-account-backed endpoints, set GOOGLE_APPLICATION_CREDENTIALS on the backend. Without this, requests that require the service account will fail with “Google Drive credentials file not found” (intended and handled in UI logs).
-- Google OAuth (per-user Drive):
-  - For user Drive features, set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
-- JWT secret:
-  - You must set a strong JWT_SECRET in the backend .env for production.
+License
+- This project is provided as-is. Add your preferred license here if applicable.
 
-PREREQUISITES
-
-- Node.js (LTS), npm
-- Python 3.10+
-- MongoDB running locally or a remote cluster
-- Firebase project with Web App credentials
-- Optional: Google Cloud service account JSON for Drive (for service account mode)
-- Optional: Google OAuth client for per-user Drive functionality
-
-ENVIRONMENT VARIABLES
-
-Create backend/.env (see backend/.env.example):
-- FLASK_ENV=development
-- MONGODB_URI=mongodb://localhost:27017
-- MONGODB_DB_NAME=cinemasync
-- JWT_SECRET=replace-with-a-strong-secret
-- API_BASE_URL=http://localhost:5000/api
-- FRONTEND_URL=http://localhost:5173
-- GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
-- GOOGLE_CLIENT_ID=your-google-oauth-client-id
-- GOOGLE_CLIENT_SECRET=your-google-oauth-client-secret
-
-Create client/.env (see client/.env.example):
-- VITE_FIREBASE_API_KEY=...
-- VITE_FIREBASE_AUTH_DOMAIN=your-app.firebaseapp.com
-- VITE_FIREBASE_PROJECT_ID=...
-- VITE_FIREBASE_STORAGE_BUCKET=...
-- VITE_FIREBASE_MESSAGING_SENDER_ID=...
-- VITE_FIREBASE_APP_ID=...
-- Optional (override if needed):
-  - VITE_API_BASE_URL=http://localhost:5000/api
-  - VITE_SOCKET_URL=http://localhost:5000
-  - VITE_DEBUG_LOGS=true
-
-INSTALL AND RUN
-
-Backend
-1) Create and fill backend/.env
-2) Install dependencies:
-   - python -m venv .venv && source .venv/bin/activate
-   - pip install -r backend/requirements.txt
-3) Run the app (from repo root):
-   - python backend/run.py
-   The server runs at http://localhost:5000 with API at /api
-
-Client
-1) Create and fill client/.env
-2) Install dependencies:
-   - cd client && npm install
-3) Run dev server:
-   - npm run dev
-   Vite runs at http://localhost:5173
-
-KEY ENDPOINTS
-
-- Health checks:
-  - Backend: GET http://localhost:5000/health
-  - API: GET http://localhost:5000/api/health
-- Rooms:
-  - GET /api/rooms/ (public active rooms)
-  - GET /api/rooms/my-rooms (JWT required)
-  - GET /api/rooms/<room_id>
-  - POST /api/rooms/ (JWT required) – create
-  - POST /api/rooms/<room_id>/join (JWT required)
-  - POST /api/rooms/<room_id>/leave (JWT required)
-  - POST /api/rooms/<room_id>/playback (host only)
-  - POST /api/rooms/<room_id>/video (host only)
-- Movies / Drive (service account):
-  - GET /api/movies/list
-  - GET /api/movies/stream/<file_id>
-  - GET /api/movies/metadata/<file_id>
-  - GET /api/movies/search?q=...
-  - GET /api/movies/recent
-- User Drive (OAuth):
-  - GET /api/rooms/videos/drive (JWT required)
-  - GET /api/google/health
-  - GET /api/google/auth/url
-  - GET /api/google/tokens/status
-
-COMMON PITFALLS AND DIAGNOSIS
-
-- Firebase “unauthorized-domain” error:
-  - Ensure Vite dev runs on http://localhost:5173 and add “localhost” to Firebase Authorized domains.
-  - Ensure client/.env Firebase values are set; the client now throws a hard error if a demo config is detected.
-
-- CORS with credentials:
-  - Backend explicitly allows http://localhost:5173 and http://127.0.0.1:5173 and supports Authorization header.
-  - For production, set FRONTEND_URL and ensure it matches the deployed frontend origin exactly.
-
-- Google Drive credentials:
-  - If GOOGLE_APPLICATION_CREDENTIALS is missing, service-account endpoints will fail with “Google Drive credentials file not found”.
-  - The client reduces noise in logs but you should set credentials for full functionality.
-
-- Socket.IO:
-  - Client uses socket.io-client ^4.7.5 and server uses Flask-SocketIO 5.3.6.
-  - Client socket defaults to same origin where possible to avoid mixed origins.
-
-- MongoDB:
-  - Indexes are created for rooms, users, and tokens. Ensure MongoDB is reachable via MONGODB_URI.
-
-SECURITY NOTES
-
-- Use a strong JWT_SECRET in production.
-- Never commit real secrets or Google service account JSON to the repo.
-- Restrict CORS in production to your exact frontend origin only.
-
-ARCHITECTURE NOTES
-
-- Backend: Flask (REST) + Flask-SocketIO for realtime events, MongoDB for persistence.
-- Client: React + Vite + Firebase Authentication, integrates REST and Socket.IO.
-- Drive integration supports both service account (app-owned) and OAuth (user-owned) modes.
-
-CHANGELOG (recent fixes)
-
-- CORS origins enumerated; Authorization header allowed/exposed.
-- Firebase config fails hard on demo defaults.
-- Vite host bound to localhost.
-- Room/user ID normalization to strings; added key indexes.
-- Fixed backend route imports and signatures; safer Content-Disposition header quoting.
-- Socket.IO CORS allowed origins aligned; host/participant equality normalized.
-- API base default: same-origin fallback to avoid host mismatches.
-- MyRooms favorites stabilized and persisted to localStorage.
-- Implemented MovieMetadata.save_metadata with unique index on file_id.
-
-SUPPORT
-
-If you hit configuration-related errors:
-- Confirm client/.env and backend/.env match this README.
-- Check server logs for CORS warnings and JWT warnings.
-- Validate Firebase authorized domains and web app credentials.
-- Ensure MongoDB is running and reachable.
+Useful links to files
+- Backend entry: backend/run.py
+- Flask app: backend/app/__init__.py
+- REST routes: backend/app/routes.py, backend/app/room_routes.py
+- Socket.IO: backend/app/socket_manager.py
+- Models: backend/app/models.py
+- Frontend app: client/src/App.jsx
+- Theater page: client/src/pages/Theater.jsx
+- Movie Browser: client/src/components/movies/MovieBrowser.jsx
+- Video Player: client/src/components/theater/VideoPlayer.jsx

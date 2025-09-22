@@ -1,14 +1,15 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { Box, Typography, CircularProgress, Button } from '@mui/material';
 import { motion } from 'framer-motion';
 import { getDirectStreamUrl } from '../../utils/api';
 
-const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
+const VideoPlayer = forwardRef(({ isPlaying, isMuted, fileId = null, src = null, currentTime, onTimeUpdate }, ref) => {
+  const containerRef = useRef(null);
   const videoRef = useRef(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   
-  // Prefer an explicit src when provided (e.g., Google Drive preview URL); otherwise fall back to backend stream by fileId
+  // Prefer an explicit src when provided (e.g., Google Drive per-user URL); otherwise fall back to backend stream by fileId
   const streamUrl = src ? src : (fileId ? getDirectStreamUrl(fileId) : null);
   // Detect YouTube sources to render iframe instead of HTML5 video
   const isYouTubeSrc = typeof streamUrl === 'string' && /(?:youtube\.com|youtu\.be)/i.test(streamUrl);
@@ -17,7 +18,31 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
   const ytSrc = isYouTubeSrc
     ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}enablejsapi=1&rel=0${pageOrigin ? `&origin=${encodeURIComponent(pageOrigin)}` : ''}`
     : null;
-  
+
+  // Expose fullscreen controls to parent
+  useImperativeHandle(ref, () => ({
+    async enterFullscreen() {
+      try {
+        const el = containerRef.current;
+        if (!el) return;
+        if (document.fullscreenElement) return;
+        if (el.requestFullscreen) await el.requestFullscreen();
+      } catch (e) {
+        console.warn('enterFullscreen failed:', e);
+      }
+    },
+    async exitFullscreen() {
+      try {
+        if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
+      } catch (e) {
+        console.warn('exitFullscreen failed:', e);
+      }
+    },
+    isFullscreen() {
+      return Boolean(document.fullscreenElement);
+    }
+  }), []);
+
   // Effect to handle play/pause
   useEffect(() => {
     if (videoRef.current && videoRef.current.tagName === 'VIDEO') {
@@ -35,7 +60,7 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
     }
     // Note: YouTube iframe playback is not controlled via HTML5 video API.
   }, [isPlaying]);
-  
+
   // Effect to handle mute/unmute
   useEffect(() => {
     if (videoRef.current && videoRef.current.tagName === 'VIDEO') {
@@ -43,6 +68,19 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
     }
     // Note: Muting a YouTube iframe requires the YouTube IFrame API; not handled here.
   }, [isMuted]);
+
+  // Keep currentTime in sync when provided
+  useEffect(() => {
+    try {
+      if (videoRef.current && typeof currentTime === 'number' && !Number.isNaN(currentTime)) {
+        // Avoid excessive seeks; only set if drift is > 0.5s
+        const drift = Math.abs((videoRef.current.currentTime || 0) - currentTime);
+        if (drift > 0.5) {
+          videoRef.current.currentTime = currentTime;
+        }
+      }
+    } catch (_) {}
+  }, [currentTime]);
   
   // Handle video errors
   const handleVideoError = (e) => {
@@ -64,6 +102,7 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
 
   return (
     <Box
+      ref={containerRef}
       sx={{
         width: '100%',
         height: '100%',
@@ -152,6 +191,13 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
               controls={false}
               playsInline
               onError={handleVideoError}
+              onTimeUpdate={(e) => {
+                try {
+                  if (typeof onTimeUpdate === 'function') {
+                    onTimeUpdate(e.currentTarget.currentTime || 0);
+                  }
+                } catch (_) {}
+              }}
             >
               {/* Let the browser infer MIME type to support various formats */}
               <source src={streamUrl} />
@@ -238,6 +284,6 @@ const VideoPlayer = ({ isPlaying, isMuted, fileId = null, src = null }) => {
       </Box>
     </Box>
   );
-};
+});
 
 export default VideoPlayer;

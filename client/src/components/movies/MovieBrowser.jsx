@@ -96,21 +96,34 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
     setSearchResults([]);
     setSearchQuery('');
     setShowRecent(false);
-    
+
     try {
+      // Prefer per-user Drive listing for the root view when user is connected
+      if (folderId === null && driveAvailable && driveConnected) {
+        const vids = await fetchDriveVideos(backendToken);
+        setFolders([]);
+        // Normalize to expected structure with type: 'video'
+        setMovies((vids || []).map(v => ({ ...v, type: 'video' })));
+        setCurrentFolder(null);
+        // Root is not added to history; reset to root
+        setFolderHistory([]);
+        return;
+      }
+
+      // Fallback to server-wide library (service account)
       const response = await fetchMoviesList(folderId);
-      
+
       // Separate folders and movies
       const folderItems = response.data.filter(item => item.type === 'folder');
       const movieItems = response.data.filter(item => item.type === 'video');
-      
+
       setFolders(folderItems);
       setMovies(movieItems);
-      
+
       // Update current folder
       setCurrentFolder(response.current_folder || null);
-      
-      // Update folder history
+
+      // Update folder history (only when navigating into a folder)
       if (folderId && !folderHistory.includes(folderId)) {
         setFolderHistory(prev => [...prev, folderId]);
       }

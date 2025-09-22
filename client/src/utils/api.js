@@ -113,6 +113,29 @@ export const setRoomVideo = async (roomId, payload, token) => {
   return data.room;
 };
 
+// Update room (host only). Supports partial updates like { name, description, is_private, password, enable_chat, enable_reactions }
+export const updateRoom = async (roomId, payload, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to update room');
+  return data.room;
+};
+
+// Delete/deactivate room (host only)
+export const deleteRoom = async (roomId, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to delete room');
+  return true;
+};
+
 /**
  * Get streaming link for a movie
  * @param {string} fileId - Google Drive file ID
@@ -370,4 +393,6 @@ export default {
   getGoogleTokensStatus,
   fetchDriveVideos,
   setRoomVideo,
+  updateRoom,
+  deleteRoom,
 };

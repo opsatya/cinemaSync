@@ -39,7 +39,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../context/socket';
-import { getRoomDetails, getUserDriveStreamUrl } from '../utils/api';
+import { getRoomDetails, getUserDriveStreamUrl, setRoomVideo } from '../utils/api';
 // Import components
 import VideoPlayer from '../components/theater/VideoPlayer';
 import ChatPanel from '../components/chat/ChatPanel';
@@ -80,19 +80,48 @@ const Theater = () => {
   const connectErrorTimer = useRef(null);
   const reconnectAttempts = useRef(0);
   const joinInProgress = useRef(false);
+  const joinTimeoutRef = useRef(null);
   
   // Movie selection state
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [showMovieBrowser, setShowMovieBrowser] = useState(false);
+  const videoRef = useRef(null);
+
+  // Derive presets from room.movie_source to avoid showing Browse UI when a video is already set
+  const sourceType = String(room?.movie_source?.type || '').toLowerCase();
+  const hasPresetDrive =
+    (sourceType === 'google_drive' || sourceType === 'googledrive') &&
+    Boolean(room?.movie_source?.video_id || room?.movie_source?.value);
+  const hasPresetDirect =
+    sourceType === 'directlink' && Boolean(room?.movie_source?.value);
+
 
   // FIXED: Helper to check if user can control playback (now includes host check)
   const canControlPlayback = useCallback(() => {
     return roomJoinStatus === 'joined' && currentUser && selectedMovie && isHost;
   }, [roomJoinStatus, currentUser, selectedMovie, isHost]);
 
-  // FIXED: Helper to check if user is host
+  // Gate all emits until joined; optional ack callback
+  const emitSafe = useCallback((event, payload, ack) => {
+    if (roomJoinStatus !== 'joined') {
+      console.warn('[Socket] Blocked emit until joined:', event);
+      return;
+    }
+    try {
+      if (typeof ack === 'function') {
+        socket.emit(event, payload, ack);
+      } else {
+        socket.emit(event, payload);
+      }
+    } catch (e) {
+      console.warn('[Socket] emit failed:', event, e);
+    }
+  }, [roomJoinStatus]);
+
+  // FIXED: Helper to check if user is host (normalized string compare)
   const checkIfHost = useCallback((roomData, userId) => {
-    return roomData?.host_id === userId;
+    if (!roomData || !userId) return false;
+    return String(roomData.host_id) === String(userId);
   }, []);
   
   // Fetch room details on mount
@@ -209,7 +238,28 @@ const Theater = () => {
     console.log('📡 [Theater] Attempting to join room:', { ...payload, password: payload.password ? '***' : undefined });
     setRoomJoinStatus('joining');
     joinInProgress.current = true;
-    socket.emit('join_room', payload);
+    socket.emit('join_room', payload, (resp) => {
+      // Prefer ack to avoid generic 'error' event spam
+      if (resp && resp.error) {
+        setJoinError(resp.error);
+        setShowPasswordDialog(true);
+        setRoomJoinStatus('failed');
+        joinInProgress.current = false;
+      }
+    });
+    // Safety timeout to prevent getting stuck in "joining"
+    if (joinTimeoutRef.current) {
+      clearTimeout(joinTimeoutRef.current);
+    }
+    joinTimeoutRef.current = setTimeout(() => {
+      if (joinInProgress.current) {
+        console.warn('⏱️ [Theater] Join timed out; resetting state');
+        setRoomJoinStatus('failed');
+        joinInProgress.current = false;
+        setError('Joining the room timed out. Please retry or check the password/network.');
+      }
+      joinTimeoutRef.current = null;
+    }, 10000);
   }, [room, currentUser, roomId]);
 
   // Socket.IO connection and event handling
@@ -280,6 +330,11 @@ const Theater = () => {
       // FIXED: Update join status
       setRoomJoinStatus('joined');
       joinInProgress.current = false;
+      // Clear any pending join timeout
+      if (joinTimeoutRef.current) {
+        clearTimeout(joinTimeoutRef.current);
+        joinTimeoutRef.current = null;
+      }
       
       console.log('🎭 [Theater] User role:', {
         isHost: checkIfHost(data.room, currentUser?.uid),
@@ -313,10 +368,34 @@ const Theater = () => {
       showReactionBubble(data.reaction);
     };
 
+    // When host changes the movie, sync all participants
+    const onVideoChanged = (payload) => {
+      try {
+        const ms = payload?.movie_source || {};
+        const t = String(ms?.type || '').toLowerCase();
+        if (t === 'googledrive' || t === 'google_drive') {
+          if (ms.video_id) {
+            setSelectedMovie({ kind: 'drive', id: ms.video_id, name: ms.video_name || 'Google Drive Video' });
+          }
+        } else if (t === 'directlink' && ms.value) {
+          setSelectedMovie({ kind: 'direct', url: ms.value, name: 'Direct Video' });
+        }
+        setRoom((prev) => ({ ...(prev || {}), movie_source: ms }));
+        console.log('🔄 [Theater] Applied video_changed:', ms);
+      } catch (e) {
+        console.warn('⚠️ [Theater] Failed to apply video_changed:', e);
+      }
+    };
+
     // FIXED: Enhanced error handling
     const onServerError = (err) => {
       const msg = err?.message || 'Unknown server error';
       console.error('❌ [Socket] Server error:', msg);
+      // Clear any pending join timeout on server error
+      if (joinTimeoutRef.current) {
+        clearTimeout(joinTimeoutRef.current);
+        joinTimeoutRef.current = null;
+      }
       
       if (/not in room/i.test(msg)) {
         console.warn('🔄 [Socket] User not in room, resetting join status');
@@ -355,6 +434,7 @@ const Theater = () => {
     socket.on('playback_updated', onPlaybackUpdated);
     socket.on('new_chat_message', onNewChat);
     socket.on('new_reaction', onNewReaction);
+    socket.on('video_changed', onVideoChanged);
     socket.on('error', onServerError);
     socket.on('connect_error', onConnectError);
 
@@ -380,12 +460,17 @@ const Theater = () => {
       socket.off('playback_updated', onPlaybackUpdated);
       socket.off('new_chat_message', onNewChat);
       socket.off('new_reaction', onNewReaction);
+      socket.off('video_changed', onVideoChanged);
       socket.off('error', onServerError);
       socket.off('connect_error', onConnectError);
       
       if (connectErrorTimer.current) {
         clearTimeout(connectErrorTimer.current);
         connectErrorTimer.current = null;
+      }
+      if (joinTimeoutRef.current) {
+        clearTimeout(joinTimeoutRef.current);
+        joinTimeoutRef.current = null;
       }
       reconnectAttempts.current = 0;
       joinInProgress.current = false;
@@ -398,6 +483,72 @@ const Theater = () => {
       attemptJoin();
     }
   }, [room, roomJoinStatus, attemptJoin]);
+
+  // Sync selectedMovie whenever room.movie_source changes (covers navigation from My Rooms)
+  useEffect(() => {
+    try {
+      const ms = room?.movie_source;
+      if (!ms) return;
+      const t = String(ms.type || '').toLowerCase();
+      if (t === 'googledrive' || t === 'google_drive') {
+        const id = ms.video_id || ms.value;
+        if (id && (!selectedMovie || selectedMovie.kind !== 'drive' || selectedMovie.id !== id)) {
+          setSelectedMovie({
+            kind: 'drive',
+            id,
+            name: ms.video_name || 'Google Drive Video'
+          });
+        }
+      } else if (t === 'directlink') {
+        const url = ms.value;
+        if (url && (!selectedMovie || selectedMovie.kind !== 'direct' || selectedMovie.url !== url)) {
+          setSelectedMovie({
+            kind: 'direct',
+            url,
+            name: 'Direct Video'
+          });
+        }
+      }
+    } catch (e) {
+      // no-op
+    }
+  }, [room?.movie_source]);
+
+  // Keyboard shortcuts: Space toggles play/pause when joined and a movie is selected
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+      const isTyping = tag === 'input' || tag === 'textarea' || (e.target && e.target.isContentEditable);
+      if (isTyping) return;
+
+      if (e.code === 'Space' || e.key === ' ') {
+        if (roomJoinStatus === 'joined' && selectedMovie) {
+          e.preventDefault();
+          if (!canControlPlayback()) return;
+          const newPlayState = !isPlaying;
+          setIsPlaying(newPlayState);
+          const payload = {
+            room_id: roomId,
+            user_id: currentUser?.uid,
+            playback_state: {
+              is_playing: !isPlaying,
+              current_time: currentTime
+            },
+          };
+          emitSafe('update_playback', payload, (resp) => {
+            if (resp && resp.error) {
+              console.warn('Playback failed:', resp.error);
+              setError(resp.error);
+            }
+          });
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [roomJoinStatus, selectedMovie, canControlPlayback, isPlaying, currentTime, roomId, currentUser?.uid, emitSafe]);
 
   // FIXED: Enhanced toggle play with proper validation
   const togglePlay = () => {
@@ -430,19 +581,17 @@ const Theater = () => {
     setIsPlaying(newPlayState);
     
     // Send to server
-    console.log('[DEBUG] Emitting update_playback:', {
+    const payload = {
       room_id: roomId,
       user_id: currentUser.uid,
-      isHost,
       playback_state: { is_playing: !isPlaying, current_time: currentTime }
-    });
-    socket.emit('update_playback', {
-      room_id: roomId,
-      user_id: currentUser.uid,
-      playback_state: { 
-        is_playing: !isPlaying, 
-        current_time: currentTime 
-      },
+    };
+    console.log('[DEBUG] Emitting update_playback:', { ...payload, isHost });
+    emitSafe('update_playback', payload, (resp) => {
+      if (resp && resp.error) {
+        console.warn('Playback failed:', resp.error);
+        setError(resp.error);
+      }
     });
   };
   
@@ -451,14 +600,31 @@ const Theater = () => {
     setIsMuted(!isMuted);
   };
   
-  // Handle movie selection
-  const handleMovieSelect = (movie) => {
-    console.log('🎬 [Theater] Movie selected:', movie);
-    setSelectedMovie(movie);
-    setShowMovieBrowser(false);
-    // Reset playback state
-    setIsPlaying(false);
-    setCurrentTime(0);
+  // Handle movie selection (host triggers backend update so everyone syncs)
+  const handleMovieSelect = async (movie) => {
+    try {
+      if (!isHost) {
+        setError('Only the host can change the movie.');
+        return;
+      }
+      console.log('🎬 [Theater] Movie selected:', movie);
+      // Expecting Google Drive movie from MovieBrowser: { id, name, ... }
+      if (!movie?.id) {
+        setError('Invalid movie selection.');
+        return;
+      }
+      // Update backend, which will broadcast to all via socket and return updated room
+      const updatedRoom = await setRoomVideo(roomId, { video_id: movie.id, video_name: movie.name || '' }, backendToken);
+      setRoom(updatedRoom || room);
+      setSelectedMovie({ kind: 'drive', id: movie.id, name: movie.name || 'Google Drive Video' });
+      setShowMovieBrowser(false);
+      // Reset playback state locally
+      setIsPlaying(false);
+      setCurrentTime(0);
+    } catch (e) {
+      console.error('❌ [Theater] Failed to set room video:', e);
+      setError(e.message || 'Failed to set room video');
+    }
   };
   
   // Animation variants
@@ -647,6 +813,7 @@ const Theater = () => {
               >
                 {selectedMovie ? (
                   <VideoPlayer
+                    ref={videoRef}
                     isPlaying={isPlaying}
                     isMuted={isMuted}
                     fileId={
@@ -684,14 +851,16 @@ const Theater = () => {
                     <Typography variant="h6" color="text.secondary" sx={{ mb: 2 }}>
                       No movie selected
                     </Typography>
-                    <Button 
-                      variant="contained" 
-                      color="primary"
-                      onClick={() => setShowMovieBrowser(true)}
-                      disabled={roomJoinStatus !== 'joined'}
-                    >
-                      Browse Movies
-                    </Button>
+                    {isHost && !hasPresetDrive && !hasPresetDirect && (
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={() => setShowMovieBrowser(true)}
+                        disabled={roomJoinStatus !== 'joined'}
+                      >
+                        Browse Movies
+                      </Button>
+                    )}
                   </Box>
                 )}
                 
@@ -752,16 +921,18 @@ const Theater = () => {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  <Button 
-                    variant="outlined" 
-                    size="small" 
-                    startIcon={<Movie />}
-                    onClick={() => setShowMovieBrowser(true)}
-                    sx={{ ml: 2 }}
-                    disabled={roomJoinStatus !== 'joined'}
-                  >
-                    {selectedMovie ? 'Change Movie' : 'Select Movie'}
-                  </Button>
+                  {isHost && !(selectedMovie?.kind === 'direct' || String(room?.movie_source?.type || '').toLowerCase() === 'directlink') && (
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<Movie />}
+                      onClick={() => setShowMovieBrowser(true)}
+                      sx={{ ml: 2 }}
+                      disabled={roomJoinStatus !== 'joined'}
+                    >
+                      {selectedMovie ? 'Change Movie' : 'Select Movie'}
+                    </Button>
+                  )}
                 </Box>
                 
                 <Box sx={{ display: 'flex', gap: 2 }}>
@@ -800,7 +971,23 @@ const Theater = () => {
                   </Tooltip>
                   <Tooltip title="Fullscreen">
                     <span>
-                      <IconButton color="primary" disabled={!selectedMovie}>
+                      <IconButton
+                        color="primary"
+                        disabled={!selectedMovie}
+                        onClick={() => {
+                          try {
+                            const api = videoRef?.current;
+                            if (!api) return;
+                            if (api.isFullscreen()) {
+                              api.exitFullscreen();
+                            } else {
+                              api.enterFullscreen();
+                            }
+                          } catch (e) {
+                            console.warn('Fullscreen toggle failed:', e);
+                          }
+                        }}
+                      >
                         <Fullscreen />
                       </IconButton>
                     </span>

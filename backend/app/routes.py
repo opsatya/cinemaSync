@@ -244,9 +244,9 @@ def get_recent_movies():
         # Get recent movies from MongoDB
         recent_movies = MovieMetadata.get_recent_movies(limit)
         
-        # If no results from MongoDB, get from default folder
+        # If no results from MongoDB, list from root (remove dependency on GOOGLE_DRIVE_FOLDER_ID)
         if not recent_movies:
-            folder_id = os.getenv('GOOGLE_DRIVE_FOLDER_ID', 'root')
+            folder_id = 'root'
             recent_movies = drive_service.list_movies(folder_id)
             recent_movies = recent_movies[:limit]  # Limit results
         

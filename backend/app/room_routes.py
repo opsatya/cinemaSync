@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, g
 from app.models import Room, UserToken
 from app.auth_middleware import token_required  # IMPORT THE MIDDLEWARE
 from app.drive_service import DriveService
+from app.socket_manager import socketio
 import os
 import traceback
 import sys
@@ -559,6 +560,91 @@ def update_playback_state(room_id):
             'message': error_msg
         }), 500
 
+@room_bp.route('/<string:room_id>', methods=['PATCH'])
+@token_required
+def update_room(room_id):
+    """Update room fields (host only). Supports name, description, is_private, password, enable_chat, enable_reactions."""
+    try:
+        user_id = g.current_user_id
+        if not room_id or not room_id.strip():
+            return jsonify({'success': False, 'message': 'Room ID is required'}), 400
+
+        room = Room.find_by_id(room_id.strip())
+        if not room:
+            return jsonify({'success': False, 'message': 'Room not found'}), 404
+
+        if str(room.get('host_id')) != str(user_id):
+            return jsonify({'success': False, 'message': 'Only room host can update room'}), 403
+
+        # Parse JSON body safely
+        data = request.get_json(silent=True)
+        if data is None:
+            raw_body = request.get_data(cache=False, as_text=True) or ''
+            if raw_body.strip():
+                try:
+                    data = json.loads(raw_body)
+                except json.JSONDecodeError as e:
+                    return jsonify({'success': False, 'message': f'Invalid JSON: {e.msg} at pos {e.pos}'}), 400
+        if not data:
+            return jsonify({'success': False, 'message': 'No update payload provided'}), 400
+
+        # Allowed fields to update
+        allowed_fields = {'name', 'description', 'is_private', 'password', 'enable_chat', 'enable_reactions'}
+        update_doc = {k: v for k, v in data.items() if k in allowed_fields}
+
+        if not update_doc:
+            return jsonify({'success': False, 'message': 'No valid fields to update'}), 400
+
+        collection = Room.get_collection()
+        result = collection.update_one(
+            {'room_id': room_id},
+            {'$set': {**update_doc, 'updated_at': datetime.utcnow()}}
+        )
+        if result.matched_count == 0:
+            return jsonify({'success': False, 'message': 'Failed to update room'}), 500
+
+        updated_room = Room.find_by_id(room_id)
+        if updated_room and '_id' in updated_room:
+            del updated_room['_id']
+        if updated_room and 'password' in updated_room:
+            updated_room['password_required'] = updated_room['password'] is not None
+            del updated_room['password']
+
+        return jsonify({'success': True, 'room': updated_room}), 200
+    except Exception as e:
+        print(f"❌ Error updating room: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@room_bp.route('/<string:room_id>', methods=['DELETE'])
+@token_required
+def delete_room(room_id):
+    """Deactivate room (host only)."""
+    try:
+        user_id = g.current_user_id
+        if not room_id or not room_id.strip():
+            return jsonify({'success': False, 'message': 'Room ID is required'}), 400
+
+        room = Room.find_by_id(room_id.strip())
+        if not room:
+            return jsonify({'success': False, 'message': 'Room not found'}), 404
+
+        if str(room.get('host_id')) != str(user_id):
+            return jsonify({'success': False, 'message': 'Only room host can delete room'}), 403
+
+        updated = Room.deactivate_room(room_id.strip())
+        if updated and '_id' in updated:
+            del updated['_id']
+        if updated and 'password' in updated:
+            updated['password_required'] = updated['password'] is not None
+            del updated['password']
+
+        return jsonify({'success': True, 'room': updated, 'message': 'Room deactivated'}), 200
+    except Exception as e:
+        print(f"❌ Error deleting room: {e}")
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
 @room_bp.route('/debug/user/<string:user_id>', methods=['GET'])
 def debug_user_rooms_detailed(user_id):
     """Enhanced debug endpoint to analyze user room associations"""
@@ -770,6 +856,15 @@ def set_room_video(room_id):
         if updated_room and 'password' in updated_room:
             updated_room['password_required'] = updated_room['password'] is not None
             del updated_room['password']
+
+        # Broadcast video change to room via Socket.IO for all participants
+        try:
+            socketio.emit('video_changed', {
+                'room_id': room_id,
+                'movie_source': updated_room.get('movie_source', {})
+            }, to=room_id)
+        except Exception as emit_err:
+            print(f"⚠️ Failed to emit video_changed: {emit_err}")
 
         return jsonify({
             'success': True,

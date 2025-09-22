@@ -22,6 +22,16 @@ import {
   Divider,
   CircularProgress,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   Add,
@@ -36,7 +46,7 @@ import {
   FavoriteBorder,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
-import { fetchMyRooms } from '../utils/api';
+import { fetchMyRooms, updateRoom, deleteRoom } from '../utils/api';
 
 const MyRooms = () => {
   const { backendToken } = useAuth();
@@ -59,6 +69,18 @@ const MyRooms = () => {
     }
   };
   const [favoriteRooms, setFavoriteRooms] = useState(getInitialFavorites()); // string room IDs
+
+  // Edit Room dialog state
+  const [editingRoom, setEditingRoom] = useState(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    description: '',
+    privacy: 'private',
+    password: '',
+    allowChat: true,
+    allowReactions: true,
+  });
 
   useEffect(() => {
     const loadRooms = async () => {
@@ -111,6 +133,75 @@ const MyRooms = () => {
       setFavoriteRooms(favoriteRooms.filter(id => id !== key));
     } else {
       setFavoriteRooms([...favoriteRooms, key]);
+    }
+  };
+
+  const openEdit = (room) => {
+    const isPrivate = room.is_private ?? room.isPrivate ?? true;
+    setEditingRoom(room);
+    setEditForm({
+      name: room.name || '',
+      description: room.description || '',
+      privacy: isPrivate ? 'private' : 'public',
+      password: room.password || '',
+      allowChat: room.enable_chat ?? true,
+      allowReactions: room.enable_reactions ?? true,
+    });
+  };
+
+  const handleEditChange = (field, value) => {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editingRoom) return;
+    try {
+      setSavingEdit(true);
+      const payload = {
+        name: editForm.name,
+        description: editForm.description,
+        is_private: editForm.privacy === 'private',
+        password: editForm.privacy === 'private' ? (editForm.password || null) : null,
+        enable_chat: !!editForm.allowChat,
+        enable_reactions: !!editForm.allowReactions,
+      };
+      const updated = await updateRoom(String(editingRoom.room_id || editingRoom.id), payload, backendToken);
+      // Replace in local state
+      setRooms((prev) =>
+        prev.map((r) =>
+          String(r.room_id || r.id) === String(editingRoom.room_id || editingRoom.id) ? updated : r
+        )
+      );
+      setEditingRoom(null);
+    } catch (e) {
+      setError(e.message || 'Failed to update room');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleShare = async (room) => {
+    try {
+      const roomId = String(room.room_id || room.id);
+      const url = `${window.location.origin}/theater/${roomId}`;
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      console.warn('Share failed:', e);
+    }
+  };
+
+  const handleDelete = async (room) => {
+    try {
+      const roomId = String(room.room_id || room.id);
+      if (!roomId) return;
+      const confirmDelete = window.confirm('Are you sure you want to delete this room?');
+      if (!confirmDelete) return;
+      await deleteRoom(roomId, backendToken);
+      setRooms((prev) => prev.filter((r) => String(r.room_id || r.id) !== roomId));
+      // Remove from favorites if present
+      setFavoriteRooms((prev) => prev.filter((id) => id !== roomId));
+    } catch (e) {
+      setError(e.message || 'Failed to delete room');
     }
   };
 
@@ -344,8 +435,8 @@ const MyRooms = () => {
                             </CardContent>
                             
                             <Box sx={{ display: 'flex', p: 1, pt: 0 }}>
-                              <Chip 
-                                label={room.is_private || room.isPrivate ? 'Private' : 'Public'} 
+                              <Chip
+                                label={room.is_private || room.isPrivate ? 'Private' : 'Public'}
                                 size="small"
                                 color={room.is_private || room.isPrivate ? 'primary' : 'success'}
                                 variant="outlined"
@@ -355,22 +446,22 @@ const MyRooms = () => {
                             
                             <CardActions sx={{ p: 2, pt: 0, justifyContent: 'space-between' }}>
                               <Box sx={{ display: 'flex', gap: 1 }}>
-                                <IconButton size="small" color="primary">
+                                <IconButton size="small" color="primary" onClick={() => openEdit(room)}>
                                   <Edit fontSize="small" />
                                 </IconButton>
-                                <IconButton size="small" color="primary">
+                                <IconButton size="small" color="primary" onClick={() => handleShare(room)}>
                                   <Share fontSize="small" />
                                 </IconButton>
-                                <IconButton size="small" color="error">
+                                <IconButton size="small" color="error" onClick={() => handleDelete(room)}>
                                   <Delete fontSize="small" />
                                 </IconButton>
                               </Box>
                               
-                              <Button 
-                                variant="contained" 
+                              <Button
+                                variant="contained"
                                 size="small"
                                 onClick={() => handleJoinRoom(roomId)}
-                                sx={{ 
+                                sx={{
                                   borderRadius: '8px',
                                   bgcolor: theme.palette.primary.main,
                                 }}
@@ -388,6 +479,76 @@ const MyRooms = () => {
               )
             )}
           </Paper>
+          {/* Edit Room Dialog */}
+          <Dialog open={Boolean(editingRoom)} onClose={() => setEditingRoom(null)} fullWidth maxWidth="sm">
+            <DialogTitle>Edit Room</DialogTitle>
+            <DialogContent dividers>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                <TextField
+                  label="Room Name"
+                  value={editForm.name}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                  fullWidth
+                />
+                <TextField
+                  label="Description"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, description: e.target.value }))}
+                  fullWidth
+                  multiline
+                  rows={3}
+                />
+                <FormControl fullWidth>
+                  <InputLabel id="privacy-select-label">Privacy</InputLabel>
+                  <Select
+                    labelId="privacy-select-label"
+                    label="Privacy"
+                    value={editForm.privacy}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, privacy: e.target.value }))}
+                  >
+                    <MenuItem value="public">Public</MenuItem>
+                    <MenuItem value="private">Private</MenuItem>
+                  </Select>
+                </FormControl>
+                {editForm.privacy === 'private' && (
+                  <TextField
+                    label="Password (optional)"
+                    type="password"
+                    value={editForm.password}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, password: e.target.value }))}
+                    fullWidth
+                    placeholder="Leave empty for no password"
+                  />
+                )}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={!!editForm.allowChat}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, allowChat: e.target.checked }))}
+                      color="primary"
+                    />
+                  }
+                  label="Enable Chat"
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={!!editForm.allowReactions}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, allowReactions: e.target.checked }))}
+                      color="primary"
+                    />
+                  }
+                  label="Enable Reactions"
+                />
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setEditingRoom(null)}>Cancel</Button>
+              <Button variant="contained" onClick={handleSaveEdit} disabled={savingEdit}>
+                {savingEdit ? 'Saving...' : 'Save'}
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Box>
       </motion.div>
     </Container>

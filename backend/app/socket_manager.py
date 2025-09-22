@@ -48,16 +48,17 @@ def register_handlers():
     
     @socketio.on('join_room')
     def handle_join_room(data):
-        """Handle client joining a room"""
+        """Handle client joining a room (supports acknowledgement callback)"""
         try:
             # Validate required data
-            if 'room_id' not in data:
-                emit('error', {'message': 'Room ID is required'})
-                return
-            
+            if not data or 'room_id' not in data:
+                msg = 'Room ID is required'
+                emit('error', {'message': msg})
+                return {'error': msg}
             if 'user_id' not in data:
-                emit('error', {'message': 'User ID is required'})
-                return
+                msg = 'User ID is required'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
             room_id = data['room_id']
             user_id = data['user_id']
@@ -65,20 +66,30 @@ def register_handlers():
             # Check if room exists
             room_data = Room.find_by_id(room_id)
             if not room_data:
-                emit('error', {'message': 'Room not found'})
-                return
+                msg = 'Room not found'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
-            # Check if room is password protected
-            if room_data.get('password') and data.get('password') != room_data['password']:
+            # Check if room is password protected (normalize and compare safely)
+            try:
+                room_pw = str(room_data.get('password') or '').strip()
+                payload_pw = str((data.get('password') if data else '') or '').strip()
+                if room_pw:
+                    if payload_pw != room_pw:
+                        print(f"[socket] Password mismatch: room_pw_len={len(room_pw)}, payload_pw_len={len(payload_pw)}")
+                        emit('error', {'message': 'Invalid password'})
+                        return {'error': 'Invalid password'}
+            except Exception as pw_err:
+                print(f"[socket] Password validation error: {pw_err}")
                 emit('error', {'message': 'Invalid password'})
-                return
+                return {'error': 'Invalid password'}
             
             # Add user to room
             try:
                 room_data = Room.add_participant(room_id, user_id)
             except ValueError as e:
                 emit('error', {'message': str(e)})
-                return
+                return {'error': str(e)}
             
             # Join the socket.io room
             join_room(room_id)
@@ -105,9 +116,11 @@ def register_handlers():
                     'host_id': safe_room['host_id']
                 }
             })
-            
+            return {'ok': True}
         except Exception as e:
-            emit('error', {'message': f'Failed to join room: {str(e)}'})
+            msg = f'Failed to join room: {str(e)}'
+            emit('error', {'message': msg})
+            return {'error': msg}
     
     @socketio.on('leave_room')
     def handle_leave_room(data):
@@ -152,39 +165,39 @@ def register_handlers():
     
     @socketio.on('update_playback')
     def on_update_playback(data):
-        """Handle playback control - FIXED VERSION"""
+        """Handle playback control (supports acknowledgement callback)"""
         try:
             print(f"🎮 update_playback event: {data}")
             
             room_id = data.get('room_id')
-            user_id = data.get('user_id') 
+            user_id = data.get('user_id')
             playback_state = data.get('playback_state')
             
             if not all([room_id, user_id, playback_state]):
-                emit('error', {'message': 'Missing required playback data'})
-                return
+                msg = 'Missing required playback data'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
             # Get fresh room data from database
             room = Room.find_by_id(room_id)
             if not room:
-                emit('error', {'message': 'Room not found'})
-                return
+                msg = 'Room not found'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
             # Check if user is in the room participants
             participants = room.get('participants', [])
-            user_in_room = False
-            for participant in participants:
-                if isinstance(participant, dict) and str(participant.get('user_id')) == str(user_id):
-                    user_in_room = True
-                    break
-                elif isinstance(participant, str) and str(participant) == str(user_id):
-                    user_in_room = True
-                    break
+            user_in_room = any(
+                (isinstance(p, dict) and str(p.get('user_id')) == str(user_id)) or
+                (isinstance(p, str) and str(p) == str(user_id))
+                for p in participants
+            )
             
             if not user_in_room:
                 print(f"❌ User {user_id} not found in room participants: {participants}")
-                emit('error', {'message': 'User not in room'})
-                return
+                msg = 'User not in room'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
             # Proper host verification
             room_host_id = room.get('host_id')
@@ -194,36 +207,40 @@ def register_handlers():
             
             if not is_user_host:
                 print(f"❌ User {user_id} is not the host (host is {room_host_id})")
-                emit('error', {'message': 'Only host can control playback'})
-                return
+                msg = 'Only host can control playback'
+                emit('error', {'message': msg})
+                return {'error': msg}
             
-            # FIXED: Update room playback state
+            # Update room playback state
             try:
                 updated_room = Room.update_playback_state(room_id, playback_state)
                 
-                # FIXED: Create a clean playback_state for broadcasting (no datetime objects)
+                # Clean playback state for broadcasting
                 broadcast_state = {
                     'is_playing': playback_state.get('is_playing', False),
                     'current_time': playback_state.get('current_time', 0),
-                    'last_updated': datetime.utcnow().isoformat()  # Convert to ISO string immediately
+                    'last_updated': datetime.utcnow().isoformat()
                 }
                 
                 print(f"✅ Playback updated: {broadcast_state}")
                 
-                # Broadcast to all users in the room with clean data
+                # Broadcast to all users in the room
                 emit('playback_updated', {
-                    'playback_state': broadcast_state,  # Use clean state instead of original
+                    'playback_state': broadcast_state,
                     'updated_by': user_id
                 }, room=room_id)
-                
+                return {'ok': True}
             except Exception as e:
                 print(f"❌ Failed to update playback state: {e}")
-                emit('error', {'message': f'Failed to update playback: {str(e)}'})
-                return
+                msg = f'Failed to update playback: {str(e)}'
+                emit('error', {'message': msg})
+                return {'error': msg}
                 
         except Exception as e:
             print(f"❌ update_playback error: {e}")
-            emit('error', {'message': f'Playback update failed: {str(e)}'})
+            msg = f'Playback update failed: {str(e)}'
+            emit('error', {'message': msg})
+            return {'error': msg}
     
     @socketio.on('chat_message')
     def handle_chat_message(data):
