@@ -20,7 +20,8 @@ GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI')
 # This is a more modern and less ambiguous way to request user information.
 SCOPES = [
     'https://www.googleapis.com/auth/userinfo.profile',
-    'https://www.googleapis.com/auth/userinfo.email', 
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/drive.readonly',
     'https://www.googleapis.com/auth/drive.file',
     'openid'
 ]
@@ -96,12 +97,31 @@ def tokens_status():
     """Returns whether the current user has stored Google tokens."""
     try:
         user_id = getattr(g, 'current_user_id', None)
+        print(f"🔍 TOKENS STATUS: user_id={user_id}")
         if not user_id:
             return jsonify({'success': False, 'message': 'Missing user id'}), 401
         tokens = UserToken.get_tokens(user_id, 'google') or {}
+        print(f"   Tokens found: {bool(tokens)}")
+        if tokens:
+            print(f"   Token keys: {list(tokens.keys())}")
+            print(f"   Has access_token: {bool(tokens.get('access_token'))}")
+            print(f"   Has refresh_token: {bool(tokens.get('refresh_token'))}")
         has_tokens = bool(tokens.get('access_token') or tokens.get('refresh_token'))
-        return jsonify({'success': True, 'connected': has_tokens})
+        return jsonify({
+            'success': True, 
+            'connected': has_tokens,
+            'debug': {
+                'user_id': user_id,
+                'tokens_found': bool(tokens),
+                'token_keys': list(tokens.keys()) if tokens else [],
+                'has_access_token': bool(tokens.get('access_token')) if tokens else False,
+                'has_refresh_token': bool(tokens.get('refresh_token')) if tokens else False
+            }
+        })
     except Exception as e:
+        print(f"❌ TOKENS STATUS ERROR: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
 @google_bp.route('/auth/callback', methods=['GET'])
@@ -134,7 +154,17 @@ def auth_callback():
         print(f"   Final user_id: {user_id}")
         if not user_id:
             print("   ❌ Unable to determine user_id - returning 400")
-            return jsonify({'success': False, 'message': 'Unable to associate user for tokens'}), 400
+            # For debugging, show what we received
+            print(f"   Debug - All query params: {dict(request.args)}")
+            print(f"   Debug - State value: {state_value}")
+            return jsonify({
+                'success': False, 
+                'message': 'Unable to associate user for tokens. Please try connecting from the app.',
+                'debug': {
+                    'state': state_value,
+                    'query_params': dict(request.args)
+                }
+            }), 400
 
         token_data = {
             'access_token': creds.token,

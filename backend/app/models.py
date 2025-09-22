@@ -375,6 +375,18 @@ class Room:
                 collection.create_index('participants.user_id')
             except Exception as e:
                 print(f"   Index ensure warning (participants.user_id): {e}")
+            try:
+                collection.create_index('is_active')
+            except Exception as e:
+                print(f"   Index ensure warning (is_active): {e}")
+            try:
+                collection.create_index('is_private')
+            except Exception as e:
+                print(f"   Index ensure warning (is_private): {e}")
+            try:
+                collection.create_index('updated_at')
+            except Exception as e:
+                print(f"   Index ensure warning (updated_at): {e}")
             
             # Test collection access
             count = collection.count_documents({})

@@ -39,7 +39,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../context/socket';
-import { getRoomDetails } from '../utils/api';
+import { getRoomDetails, getUserDriveStreamUrl } from '../utils/api';
 // Import components
 import VideoPlayer from '../components/theater/VideoPlayer';
 import ChatPanel from '../components/chat/ChatPanel';
@@ -607,12 +607,12 @@ const Theater = () => {
                     src={
                       selectedMovie?.kind
                         ? (selectedMovie.kind === 'drive'
-                            ? `https://drive.google.com/file/d/${selectedMovie.id}/preview`
+                            ? getUserDriveStreamUrl(selectedMovie.id, currentUser?.uid)
                             : selectedMovie.kind === 'youtube'
                               ? `https://www.youtube.com/embed/${selectedMovie.id}`
                               : selectedMovie.url)
                         : (selectedMovie?.id
-                            ? `https://drive.google.com/file/d/${selectedMovie.id}/preview`
+                            ? getUserDriveStreamUrl(selectedMovie.id, currentUser?.uid)
                             : null)
                     }
                     currentTime={currentTime}

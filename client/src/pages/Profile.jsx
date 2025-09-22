@@ -398,9 +398,9 @@ const Profile = () => {
                               primary={room.name}
                               secondary={
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                                  <Typography variant="caption" color="text.secondary">
+                                  <span style={{ fontSize: '0.75rem', color: 'rgba(255, 255, 255, 0.7)' }}>
                                     {room.date}
-                                  </Typography>
+                                  </span>
                                   <Chip
                                     label={`${room.participants} viewers`}
                                     size="small"
@@ -457,11 +457,13 @@ const Profile = () => {
                             <ListItemText
                               primary={movie.title}
                               secondary={
-                                <Chip
-                                  label={movie.genre}
-                                  size="small"
-                                  sx={{ height: 20, fontSize: '0.7rem', mt: 0.5 }}
-                                />
+                                <Box sx={{ mt: 0.5 }}>
+                                  <Chip
+                                    label={movie.genre}
+                                    size="small"
+                                    sx={{ height: 20, fontSize: '0.7rem' }}
+                                  />
+                                </Box>
                               }
                             />
                           </ListItem>

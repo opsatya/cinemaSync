@@ -222,6 +222,19 @@ export const getDirectStreamUrl = (fileId) => {
 };
 
 /**
+ * User-owned Google Drive streaming URL.
+ * Uses per-user OAuth by passing owner=user and the user's id in query.
+ * Note: This avoids needing Authorization headers on video tag requests.
+ * @param {string} fileId
+ * @param {string} userId
+ * @returns {string}
+ */
+export const getUserDriveStreamUrl = (fileId, userId) => {
+  const uid = encodeURIComponent(userId || '');
+  return `${API_BASE_URL}/stream/${fileId}?owner=user&user_id=${uid}`;
+};
+
+/**
  * Test network connectivity to the backend
  * @returns {Promise<boolean>} - Whether the backend is reachable
  */
@@ -348,6 +361,7 @@ export default {
   searchMovies,
   getRecentMovies,
   getDirectStreamUrl,
+  getUserDriveStreamUrl,
   exchangeToken,
   fetchMyRooms,
   createRoom,

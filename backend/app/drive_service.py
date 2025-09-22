@@ -125,8 +125,12 @@ class DriveService:
             token_uri='https://oauth2.googleapis.com/token',
             client_id=os.getenv('GOOGLE_CLIENT_ID'),
             client_secret=os.getenv('GOOGLE_CLIENT_SECRET'),
-            scopes=['https://www.googleapis.com/auth/drive.file']
+            scopes=[
+                'https://www.googleapis.com/auth/drive.readonly',
+                'https://www.googleapis.com/auth/drive.file'
+            ]
         )
+        print(f"   OAuth scopes for user {user_id}: {getattr(creds, 'scopes', None)}")
         # Refresh if needed
         if not creds.valid and creds.refresh_token:
             creds.refresh(Request())
@@ -135,7 +139,7 @@ class DriveService:
                 'access_token': creds.token,
                 'refresh_token': creds.refresh_token,
                 'token_type': 'Bearer',
-                'scope': 'https://www.googleapis.com/auth/drive.file',
+                'scope': 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
                 'expiry': creds.expiry.isoformat() if getattr(creds, 'expiry', None) else None
             }
             UserToken.save_tokens(user_id, 'google', updated)
@@ -152,21 +156,32 @@ class DriveService:
     
     def _is_video_file(self, mime_type, file_name):
         """Check if file is a video based on mime type or extension"""
+        # More comprehensive video mime types
         video_mime_types = [
-            'video/mp4', 'video/x-matroska', 'video/quicktime',
-            'video/x-msvideo', 'video/x-ms-wmv', 'video/webm', 'video/avi'
+            'video/mp4', 'video/x-matroska', 'video/quicktime', 'video/x-msvideo', 
+            'video/x-ms-wmv', 'video/webm', 'video/avi', 'video/x-flv', 
+            'video/3gpp', 'video/x-ms-asf', 'video/mp2t', 'video/ogg'
         ]
         
         video_extensions = [
-            '.mp4', '.mkv', '.mov', '.avi', '.wmv', '.webm', '.flv', '.m4v'
+            '.mp4', '.mkv', '.mov', '.avi', '.wmv', '.webm', '.flv', '.m4v',
+            '.3gp', '.asf', '.ts', '.ogv', '.mpg', '.mpeg', '.m2v'
         ]
         
-        if mime_type and any(mime_type.startswith(vmt) for vmt in video_mime_types):
-            return True
+        # Check mime type first (more reliable)
+        if mime_type:
+            # Check for exact matches
+            if mime_type in video_mime_types:
+                return True
+            # Check for general video/* pattern
+            if mime_type.startswith('video/'):
+                return True
         
+        # Fallback to file extension
         if file_name:
             _, ext = os.path.splitext(file_name.lower())
-            return ext in video_extensions
+            if ext in video_extensions:
+                return True
         
         return False
     
@@ -284,10 +299,51 @@ class DriveService:
     def list_user_videos(self, user_id):
         """List video files in the user's Drive that the app can access"""
         try:
+            print(f"🔍 list_user_videos: Getting service for user {user_id}")
             svc = self.user_service(user_id)
-            query = "trashed = false"
-            fields = "files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink)"
-            items = svc.files().list(q=query, fields=fields, pageSize=1000).execute().get('files', [])
+
+            # Debug: identify the Drive user
+            try:
+                about = svc.about().get(fields="user(displayName,emailAddress), storageQuota").execute()
+                user_info = about.get('user', {})
+                print(f"   Drive user: {user_info.get('emailAddress')} ({user_info.get('displayName')})")
+            except Exception as dbg_e:
+                print(f"   Could not fetch Drive about(): {dbg_e}")
+
+            # Query only video files
+            query = "mimeType contains 'video/' and trashed = false"
+            fields = "nextPageToken, files(id, name, mimeType, size, createdTime, modifiedTime, thumbnailLink)"
+            print(f"   Query: {query}")
+            print(f"   Fields: {fields}")
+
+            # Page through all results; include shared drives just in case
+            all_items = []
+            page_token = None
+            while True:
+                result = svc.files().list(
+                    q=query,
+                    fields=fields,
+                    pageSize=1000,
+                    pageToken=page_token,
+                    spaces='drive',
+                    corpora='user',
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                    orderBy='modifiedTime desc'
+                ).execute()
+                items = result.get('files', [])
+                all_items.extend(items)
+                page_token = result.get('nextPageToken')
+                if not page_token:
+                    break
+
+            print(f"   Total files found (pre-filter): {len(all_items)}")
+
+            # Debug: show first few files
+            for i, item in enumerate(all_items[:5]):
+                print(f"   File {i+1}: {item.get('name')} - {item.get('mimeType')}")
+                print(f"     Is video: {self._is_video_file(item.get('mimeType'), item.get('name'))}")
+
             videos = [
                 {
                     'id': it['id'],
@@ -299,12 +355,18 @@ class DriveService:
                     'thumbnailLink': it.get('thumbnailLink'),
                     'type': 'video'
                 }
-                for it in items if self._is_video_file(it.get('mimeType'), it.get('name'))
+                for it in all_items if self._is_video_file(it.get('mimeType'), it.get('name'))
             ]
+            print(f"   Videos after filtering: {len(videos)}")
             return videos
         except HttpError as error:
-            print(f"An error occurred: {error}")
+            print(f"❌ Drive API error: {error}")
             raise Exception(f"Failed to list user files: {error}")
+        except Exception as error:
+            print(f"❌ Unexpected error in list_user_videos: {error}")
+            import traceback
+            traceback.print_exc()
+            raise error
 
     def upload_user_file(self, user_id, file_path, mime_type=None, folder_id=None, name=None):
         """Upload a file to the user's Drive and return file metadata"""

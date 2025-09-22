@@ -358,7 +358,7 @@ def get_my_rooms():
             'message': error_msg
         }), 500
 
-@room_bp.route('/<room_id>/join', methods=['POST'])
+@room_bp.route('/<string:room_id>/join', methods=['POST'])
 @token_required
 def join_room(room_id):
     """Join a room"""
@@ -433,7 +433,7 @@ def join_room(room_id):
             'message': error_msg
         }), 500
 
-@room_bp.route('/<room_id>/leave', methods=['POST'])
+@room_bp.route('/<string:room_id>/leave', methods=['POST'])
 @token_required
 def leave_room(room_id):
     """Leave a room"""
@@ -481,7 +481,7 @@ def leave_room(room_id):
             'message': error_msg
         }), 500
 
-@room_bp.route('/<room_id>/playback', methods=['POST'])
+@room_bp.route('/<string:room_id>/playback', methods=['POST'])
 @token_required
 def update_playback_state(room_id):
     """Update room playback state (only host can do this)"""
@@ -647,19 +647,33 @@ def get_user_drive_videos():
     """Get user's Google Drive videos"""
     try:
         user_id = g.current_user_id
+        print(f"🎬 GET USER DRIVE VIDEOS: user_id={user_id}")
         
         # Get user's Google Drive tokens
         tokens = UserToken.get_tokens(user_id, 'google')
+        print(f"   Tokens found: {bool(tokens)}")
         
-        if not tokens or not tokens.get('access_token'):
+        if not tokens:
+            print(f"   No tokens found for user {user_id}")
             return jsonify({
                 'success': False,
-                'message': 'Google Drive not connected. Please connect your Google Drive account first.'
+                'message': 'Google Drive not connected. Please connect your Google Drive account first.',
+                'debug': 'No tokens found in database'
+            }), 401
+            
+        if not tokens.get('access_token'):
+            print(f"   Tokens exist but no access_token: {list(tokens.keys())}")
+            return jsonify({
+                'success': False,
+                'message': 'Google Drive access token missing. Please reconnect your Google Drive account.',
+                'debug': 'Tokens found but access_token missing'
             }), 401
         
+        print(f"   Access token found, fetching videos...")
         # Use DriveService to list user videos
         drive_service = DriveService()
         videos = drive_service.list_user_videos(user_id)
+        print(f"   Found {len(videos)} videos")
         
         return jsonify({
             'success': True,
@@ -668,14 +682,16 @@ def get_user_drive_videos():
         
     except Exception as e:
         print(f"❌ Error getting user drive videos: {e}")
+        print(f"   Error type: {type(e).__name__}")
         import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
-            'message': str(e)
+            'message': str(e),
+            'debug': f'Exception: {type(e).__name__}'
         }), 500
 
-@room_bp.route('/<room_id>/video', methods=['POST'])
+@room_bp.route('/<string:room_id>/video', methods=['POST'])
 @token_required 
 def set_room_video(room_id):
     """Set video for room (only host can do this)"""
@@ -696,7 +712,7 @@ def set_room_video(room_id):
                 'message': 'Room not found'
             }), 404
             
-        if room.get('host_id') != user_id:
+        if str(room.get('host_id')) != str(user_id):
             return jsonify({
                 'success': False,
                 'message': 'Only room host can set video'

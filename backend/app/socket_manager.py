@@ -150,81 +150,80 @@ def register_handlers():
         except Exception as e:
             emit('error', {'message': f'Failed to leave room: {str(e)}'})
     
-@socketio.on('update_playback')
-def on_update_playback(data):
-    """Handle playback control - FIXED VERSION"""
-    try:
-        print(f"🎮 update_playback event: {data}")
-        
-        room_id = data.get('room_id')
-        user_id = data.get('user_id') 
-        playback_state = data.get('playback_state')
-        
-        if not all([room_id, user_id, playback_state]):
-            emit('error', {'message': 'Missing required playback data'})
-            return
-        
-        # Get fresh room data from database
-        room = Room.find_by_id(room_id)
-        if not room:
-            emit('error', {'message': 'Room not found'})
-            return
-        
-        # Check if user is in the room participants
-        participants = room.get('participants', [])
-        user_in_room = False
-        for participant in participants:
-            if isinstance(participant, dict) and str(participant.get('user_id')) == str(user_id):
-                user_in_room = True
-                break
-            elif isinstance(participant, str) and str(participant) == str(user_id):
-                user_in_room = True
-                break
-        
-        if not user_in_room:
-            print(f"❌ User {user_id} not found in room participants: {participants}")
-            emit('error', {'message': 'User not in room'})
-            return
-        
-        # Proper host verification
-        room_host_id = room.get('host_id')
-        is_user_host = (str(room_host_id) == str(user_id))
-        
-        print(f"🔍 Host verification: room_host_id={room_host_id}, user_id={user_id}, is_host={is_user_host}")
-        
-        if not is_user_host:
-            print(f"❌ User {user_id} is not the host (host is {room_host_id})")
-            emit('error', {'message': 'Only host can control playback'})
-            return
-        
-        # FIXED: Update room playback state
+    @socketio.on('update_playback')
+    def on_update_playback(data):
+        """Handle playback control - FIXED VERSION"""
         try:
-            updated_room = Room.update_playback_state(room_id, playback_state)
+            print(f"🎮 update_playback event: {data}")
             
-            # FIXED: Create a clean playback_state for broadcasting (no datetime objects)
-            broadcast_state = {
-                'is_playing': playback_state.get('is_playing', False),
-                'current_time': playback_state.get('current_time', 0),
-                'last_updated': datetime.utcnow().isoformat()  # Convert to ISO string immediately
-            }
+            room_id = data.get('room_id')
+            user_id = data.get('user_id') 
+            playback_state = data.get('playback_state')
             
-            print(f"✅ Playback updated: {broadcast_state}")
+            if not all([room_id, user_id, playback_state]):
+                emit('error', {'message': 'Missing required playback data'})
+                return
             
-            # Broadcast to all users in the room with clean data
-            emit('playback_updated', {
-                'playback_state': broadcast_state,  # Use clean state instead of original
-                'updated_by': user_id
-            }, room=room_id)
+            # Get fresh room data from database
+            room = Room.find_by_id(room_id)
+            if not room:
+                emit('error', {'message': 'Room not found'})
+                return
             
+            # Check if user is in the room participants
+            participants = room.get('participants', [])
+            user_in_room = False
+            for participant in participants:
+                if isinstance(participant, dict) and str(participant.get('user_id')) == str(user_id):
+                    user_in_room = True
+                    break
+                elif isinstance(participant, str) and str(participant) == str(user_id):
+                    user_in_room = True
+                    break
+            
+            if not user_in_room:
+                print(f"❌ User {user_id} not found in room participants: {participants}")
+                emit('error', {'message': 'User not in room'})
+                return
+            
+            # Proper host verification
+            room_host_id = room.get('host_id')
+            is_user_host = (str(room_host_id) == str(user_id))
+            
+            print(f"🔍 Host verification: room_host_id={room_host_id}, user_id={user_id}, is_host={is_user_host}")
+            
+            if not is_user_host:
+                print(f"❌ User {user_id} is not the host (host is {room_host_id})")
+                emit('error', {'message': 'Only host can control playback'})
+                return
+            
+            # FIXED: Update room playback state
+            try:
+                updated_room = Room.update_playback_state(room_id, playback_state)
+                
+                # FIXED: Create a clean playback_state for broadcasting (no datetime objects)
+                broadcast_state = {
+                    'is_playing': playback_state.get('is_playing', False),
+                    'current_time': playback_state.get('current_time', 0),
+                    'last_updated': datetime.utcnow().isoformat()  # Convert to ISO string immediately
+                }
+                
+                print(f"✅ Playback updated: {broadcast_state}")
+                
+                # Broadcast to all users in the room with clean data
+                emit('playback_updated', {
+                    'playback_state': broadcast_state,  # Use clean state instead of original
+                    'updated_by': user_id
+                }, room=room_id)
+                
+            except Exception as e:
+                print(f"❌ Failed to update playback state: {e}")
+                emit('error', {'message': f'Failed to update playback: {str(e)}'})
+                return
+                
         except Exception as e:
-            print(f"❌ Failed to update playback state: {e}")
-            emit('error', {'message': f'Failed to update playback: {str(e)}'})
-            return
-            
-    except Exception as e:
-        print(f"❌ update_playback error: {e}")
-        emit('error', {'message': f'Playback update failed: {str(e)}'})
-
+            print(f"❌ update_playback error: {e}")
+            emit('error', {'message': f'Playback update failed: {str(e)}'})
     
     @socketio.on('chat_message')
     def handle_chat_message(data):
@@ -261,7 +260,7 @@ def on_update_playback(data):
             # Check if user is in the room
             user_in_room = False
             for participant in room_data['participants']:
-                if participant['user_id'] == user_id:
+                if str(participant.get('user_id')) == str(user_id):
                     user_in_room = True
                     break
             
@@ -315,7 +314,7 @@ def on_update_playback(data):
             # Check if user is in the room
             user_in_room = False
             for participant in room_data['participants']:
-                if participant['user_id'] == user_id:
+                if str(participant.get('user_id')) == str(user_id):
                     user_in_room = True
                     break
             
