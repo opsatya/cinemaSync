@@ -8,6 +8,7 @@ import traceback
 import sys
 from datetime import datetime
 import json
+from werkzeug.security import generate_password_hash, check_password_hash
 
 room_bp = Blueprint('room', __name__, url_prefix='/api/rooms')
 
@@ -26,12 +27,16 @@ def get_active_rooms():
         rooms = Room.get_active_rooms(limit, skip)
         print(f"   Found {len(rooms)} active rooms")
         
-        # Remove sensitive data
+        # Remove sensitive data (support legacy docs that may still have 'password')
         for room in rooms:
             if '_id' in room:
                 del room['_id']
+            # Derive password_required from either hash or legacy plaintext
+            has_pw = bool(room.get('password_hash')) or bool(room.get('password'))
+            room['password_required'] = has_pw
+            if 'password_hash' in room:
+                del room['password_hash']
             if 'password' in room:
-                room['password_required'] = room['password'] is not None
                 del room['password']
         
         return jsonify({
@@ -67,10 +72,12 @@ def create_room():
     """Create a new room with comprehensive error handling"""
     try:
         print("🚀 CREATE ROOM: Starting request processing")
-        print(f"   Request headers: {dict(request.headers)}")
-        print(f"   Request method: {request.method}")
-        print(f"   Request URL: {request.url}")
-        print(f"   Content-Type: {request.content_type}")
+        debug_mode = os.getenv('FLASK_ENV') != 'production'
+        if debug_mode:
+            print(f"   Request method: {request.method}")
+            print(f"   Request URL: {request.url}")
+            print(f"   Content-Type: {request.content_type}")
+            print(f"   Request headers: [redacted in production]")
         
         # Check if we have user data from middleware
         user_id = getattr(g, 'current_user_id', None)
@@ -125,8 +132,8 @@ def create_room():
                 parse_steps.append('parsed request.form')
 
         print(f"   Parse steps: {parse_steps}")
-        print(f"   Raw request data: {data}")
-        print(f"   Request data type: {type(data)}")
+        if 'debug_mode' in locals() and debug_mode:
+            print(f"   Request data type: {type(data)}")
         
         if not data:
             error_msg = 'Request body is required and must be valid JSON'
@@ -209,9 +216,13 @@ def create_room():
         print(f"   Room type: {type(room)}")
         print(f"   Room keys: {list(room.keys()) if isinstance(room, dict) else 'Not a dict'}")
         
-        # Clean up response data
-        if isinstance(room, dict) and '_id' in room:
-            del room['_id']
+        # Clean up response data (remove sensitive fields)
+        if isinstance(room, dict):
+            room.pop('_id', None)
+            # Derive password_required and strip any password fields (hash or legacy)
+            room['password_required'] = bool(room.get('password_hash') or room.get('password'))
+            room.pop('password_hash', None)
+            room.pop('password', None)
         
         return jsonify({
             'success': True,
@@ -282,8 +293,11 @@ def get_room(room_id):
         # Remove sensitive data
         if '_id' in room:
             del room['_id']
+        # Derive from either field, then drop both
+        room['password_required'] = bool(room.get('password_hash') or room.get('password'))
+        if 'password_hash' in room:
+            del room['password_hash']
         if 'password' in room:
-            room['password_required'] = room['password'] is not None
             del room['password']
         
         return jsonify({
@@ -335,8 +349,10 @@ def get_my_rooms():
         for room in rooms:
             if '_id' in room:
                 del room['_id']
+            room['password_required'] = bool(room.get('password_hash') or room.get('password'))
+            if 'password_hash' in room:
+                del room['password_hash']
             if 'password' in room:
-                room['password_required'] = room['password'] is not None
                 del room['password']
         
         return jsonify({
@@ -394,13 +410,26 @@ def join_room(room_id):
                 'message': error_msg
             }), 400
         
-        if room.get('password') and data.get('password') != room['password']:
-            error_msg = 'Invalid password'
-            print(f"❌ Error: {error_msg}")
-            return jsonify({
-                'success': False,
-                'message': error_msg
-            }), 401
+        # Verify password (support hashed and legacy plaintext)
+        payload_pw = (data.get('password') or '').strip()
+        room_pw_hash = room.get('password_hash')
+        room_pw_plain = room.get('password')  # legacy
+        if room_pw_hash:
+            if not payload_pw or not check_password_hash(room_pw_hash, payload_pw):
+                error_msg = 'Invalid password'
+                print(f"❌ Error: {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                }), 401
+        elif room_pw_plain:
+            if payload_pw != str(room_pw_plain).strip():
+                error_msg = 'Invalid password'
+                print(f"❌ Error: {error_msg}")
+                return jsonify({
+                    'success': False,
+                    'message': error_msg
+                }), 401
         
         try:
             room = Room.add_participant(room_id.strip(), g.current_user_id)
@@ -416,6 +445,8 @@ def join_room(room_id):
         # Clean up response
         if '_id' in room:
             del room['_id']
+        if 'password_hash' in room:
+            del room['password_hash']
         if 'password' in room:
             del room['password']
         
@@ -464,6 +495,8 @@ def leave_room(room_id):
         # Clean up response
         if room and '_id' in room:
             del room['_id']
+        if room and 'password_hash' in room:
+            del room['password_hash']
         if room and 'password' in room:
             del room['password']
         
@@ -542,6 +575,8 @@ def update_playback_state(room_id):
         # Clean up response
         if '_id' in room:
             del room['_id']
+        if 'password_hash' in room:
+            del room['password_hash']
         if 'password' in room:
             del room['password']
         
@@ -591,14 +626,25 @@ def update_room(room_id):
         # Allowed fields to update
         allowed_fields = {'name', 'description', 'is_private', 'password', 'enable_chat', 'enable_reactions'}
         update_doc = {k: v for k, v in data.items() if k in allowed_fields}
-
+        
         if not update_doc:
             return jsonify({'success': False, 'message': 'No valid fields to update'}), 400
 
+        # Transform password to password_hash; do not store plaintext
+        set_fields = {k: v for k, v in update_doc.items() if k != 'password'}
+        if 'password' in update_doc:
+            pw = update_doc.get('password')
+            if pw is None or (isinstance(pw, str) and pw.strip() == ''):
+                set_fields['password_hash'] = None
+            else:
+                set_fields['password_hash'] = generate_password_hash(str(pw))
+
+        set_fields['updated_at'] = datetime.utcnow()
+        
         collection = Room.get_collection()
         result = collection.update_one(
             {'room_id': room_id},
-            {'$set': {**update_doc, 'updated_at': datetime.utcnow()}}
+            {'$set': set_fields}
         )
         if result.matched_count == 0:
             return jsonify({'success': False, 'message': 'Failed to update room'}), 500
@@ -606,9 +652,12 @@ def update_room(room_id):
         updated_room = Room.find_by_id(room_id)
         if updated_room and '_id' in updated_room:
             del updated_room['_id']
-        if updated_room and 'password' in updated_room:
-            updated_room['password_required'] = updated_room['password'] is not None
-            del updated_room['password']
+        if updated_room:
+            updated_room['password_required'] = bool(updated_room.get('password_hash') or updated_room.get('password'))
+            if 'password_hash' in updated_room:
+                del updated_room['password_hash']
+            if 'password' in updated_room:
+                del updated_room['password']
 
         return jsonify({'success': True, 'room': updated_room}), 200
     except Exception as e:
@@ -635,9 +684,12 @@ def delete_room(room_id):
         updated = Room.deactivate_room(room_id.strip())
         if updated and '_id' in updated:
             del updated['_id']
-        if updated and 'password' in updated:
-            updated['password_required'] = updated['password'] is not None
-            del updated['password']
+        if updated:
+            updated['password_required'] = bool(updated.get('password_hash') or updated.get('password'))
+            if 'password_hash' in updated:
+                del updated['password_hash']
+            if 'password' in updated:
+                del updated['password']
 
         return jsonify({'success': True, 'room': updated, 'message': 'Room deactivated'}), 200
     except Exception as e:
@@ -853,9 +905,12 @@ def set_room_video(room_id):
         updated_room = Room.find_by_id(room_id)
         if updated_room and '_id' in updated_room:
             del updated_room['_id']
-        if updated_room and 'password' in updated_room:
-            updated_room['password_required'] = updated_room['password'] is not None
-            del updated_room['password']
+        if updated_room:
+            updated_room['password_required'] = bool(updated_room.get('password_hash') or updated_room.get('password'))
+            if 'password_hash' in updated_room:
+                del updated_room['password_hash']
+            if 'password' in updated_room:
+                del updated_room['password']
 
         # Broadcast video change to room via Socket.IO for all participants
         try:

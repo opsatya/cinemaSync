@@ -7,6 +7,7 @@ from app.models import init_db
 from .firebase_admin import init_firebase
 from bson import ObjectId
 from datetime import datetime
+from app.config import get_config
 
 class MongoJSONProvider(JSONProvider):
     """A JSON provider that can handle MongoDB's ObjectId and datetime."""
@@ -32,6 +33,12 @@ load_dotenv()
 
 def create_app():
     app = Flask(__name__)
+    # Load environment-specific configuration (sets SECRET_KEY, etc.)
+    try:
+        app.config.from_object(get_config())
+    except Exception:
+        # Fallback to a minimal secret for sessions if config missing (dev only)
+        app.config['SECRET_KEY'] = app.config.get('SECRET_KEY') or os.getenv('SECRET_KEY', 'dev-key-for-development-only')
     
     # Configure CORS with explicit origins and headers for credentials
     allowed_origins = [

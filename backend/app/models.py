@@ -5,10 +5,55 @@ from datetime import datetime
 import json
 import traceback
 import sys
+from werkzeug.security import generate_password_hash, check_password_hash
+
+# Optional encryption for tokens at rest
+try:
+    from cryptography.fernet import Fernet, InvalidToken  # type: ignore
+except Exception:
+    Fernet = None
+    InvalidToken = Exception
 
 # MongoDB connection
 client = None
 db = None
+
+# Encryption helpers for securing OAuth tokens at rest
+def _get_fernet():
+    """Return a Fernet instance if TOKENS_ENC_KEY is configured, else None."""
+    try:
+        key = os.getenv('TOKENS_ENC_KEY')
+        if not key or Fernet is None:
+            return None
+        # Accept raw base64 key or quoted string
+        key_bytes = key.encode('utf-8') if isinstance(key, str) else key
+        return Fernet(key_bytes)
+    except Exception:
+        return None
+
+def _encrypt_value(plain: str):
+    """Encrypt a string value with Fernet; returns base64 token string or None."""
+    if plain is None:
+        return None
+    f = _get_fernet()
+    if not f:
+        return None
+    try:
+        return f.encrypt(plain.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return None
+
+def _decrypt_value(token: str):
+    """Decrypt a Fernet token string into plaintext; returns None on failure."""
+    if not token:
+        return None
+    f = _get_fernet()
+    if not f:
+        return None
+    try:
+        return f.decrypt(token.encode('utf-8')).decode('utf-8')
+    except Exception:
+        return None
 
 def json_serial(obj):
     """JSON serializer for objects not serializable by default json code"""
@@ -242,29 +287,48 @@ class UserToken:
 
     @staticmethod
     def save_tokens(user_id, provider, token_data):
-        """Insert or update tokens for a user/provider"""
+        """Insert or update tokens for a user/provider, encrypted at rest if possible."""
         try:
             print(f"🔐 Saving tokens for user: {user_id}, provider: {provider}")
             collection = UserToken.get_collection()
-            
+
+            access_token = token_data.get('access_token')
+            refresh_token = token_data.get('refresh_token')
+            token_type = token_data.get('token_type')
+            scope = token_data.get('scope')
+            expiry = token_data.get('expiry')
+
+            # Prefer encrypted storage when TOKENS_ENC_KEY is configured
+            enc_access = _encrypt_value(access_token) if access_token else None
+            enc_refresh = _encrypt_value(refresh_token) if refresh_token else None
+
             token_record = {
                 'user_id': str(user_id),
                 'provider': provider,
-                'access_token': token_data.get('access_token'),
-                'refresh_token': token_data.get('refresh_token'),
-                'token_type': token_data.get('token_type'),
-                'scope': token_data.get('scope'),
-                'expiry': token_data.get('expiry'),
+                'token_type': token_type,
+                'scope': scope,
+                'expiry': expiry,
                 'updated_at': datetime.utcnow()
             }
-            
+
+            if enc_access or enc_refresh:
+                token_record['access_token_enc'] = enc_access
+                token_record['refresh_token_enc'] = enc_refresh
+                # Remove any legacy plaintext fields on next update
+                token_record['access_token'] = None
+                token_record['refresh_token'] = None
+            else:
+                # Fallback to plaintext if encryption unavailable (not recommended for production)
+                token_record['access_token'] = access_token
+                token_record['refresh_token'] = refresh_token
+
             # Upsert on user_id + provider
             result = collection.update_one(
                 {'user_id': str(user_id), 'provider': provider},
                 {'$set': token_record, '$setOnInsert': {'created_at': datetime.utcnow()}},
                 upsert=True
             )
-            
+
             print(f"   Tokens saved: matched={result.matched_count}, modified={result.modified_count}, upserted={bool(result.upserted_id)}")
             return True
         except Exception as e:
@@ -273,13 +337,27 @@ class UserToken:
 
     @staticmethod
     def get_tokens(user_id, provider):
-        """Fetch tokens for a user/provider"""
+        """Fetch tokens for a user/provider, decrypting if stored encrypted."""
         try:
             print(f"🔐 Getting tokens for user: {user_id}, provider: {provider}")
             collection = UserToken.get_collection()
             doc = collection.find_one({'user_id': str(user_id), 'provider': provider})
             result = serialize_document(doc)
             print(f"   Found tokens: {bool(result)}")
+            if not result:
+                return None
+
+            # If encrypted fields exist, decrypt into plaintext keys for consumers
+            access_enc = result.get('access_token_enc')
+            refresh_enc = result.get('refresh_token_enc')
+            if access_enc or refresh_enc:
+                decrypted = dict(result)
+                if access_enc:
+                    decrypted['access_token'] = _decrypt_value(access_enc)
+                if refresh_enc:
+                    decrypted['refresh_token'] = _decrypt_value(refresh_enc)
+                return decrypted
+
             return result
         except Exception as e:
             print(f"❌ Error getting tokens: {e}")
@@ -430,7 +508,7 @@ class Room:
                 'name': data.get('name', f"Room {room_id}"),
                 'description': data.get('description', ''),
                 'movie_source': data['movie_source'],
-                'password': data.get('password', None),
+                'password_hash': generate_password_hash(str(data.get('password'))) if data.get('password') else None,
                 'is_private': data.get('is_private', True),
                 'enable_chat': data.get('enable_chat', True),
                 'enable_reactions': data.get('enable_reactions', True),

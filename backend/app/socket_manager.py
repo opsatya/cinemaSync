@@ -1,10 +1,22 @@
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 from app.models import Room
 from datetime import datetime
 import os
+import jwt
+from flask import session, request
+from werkzeug.security import check_password_hash
 
-# Initialize SocketIO
-socketio = SocketIO()
+# Initialize SocketIO with threading mode and disabled upgrades to prevent WebSocket issues
+socketio = SocketIO(
+    async_mode='threading',
+    allow_upgrades=False,
+    transports=['polling'],
+    logger=False,
+    engineio_logger=False
+)
+
+# JWT secret for socket auth
+JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 
 # Utility: recursively convert datetime objects to ISO strings so
 # payloads are JSON serializable for Socket.IO
@@ -19,7 +31,6 @@ def _to_json_safe(obj):
 
 def init_socketio(app):
     """Initialize SocketIO with the Flask app"""
-    # Align socket CORS with Flask CORS to avoid origin mismatches
     allowed_origins = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -28,7 +39,13 @@ def init_socketio(app):
     if frontend_url:
         allowed_origins.append(frontend_url.rstrip("/"))
 
-    socketio.init_app(app, cors_allowed_origins=allowed_origins)
+    socketio.init_app(
+        app, 
+        cors_allowed_origins=allowed_origins,
+        async_mode='threading',
+        allow_upgrades=False,
+        transports=['polling']
+    )
     register_handlers()
     return socketio
 
@@ -36,9 +53,31 @@ def register_handlers():
     """Register all socket event handlers"""
     
     @socketio.on('connect')
-    def handle_connect():
-        """Handle client connection"""
-        emit('connection_response', {'status': 'connected'})
+    def handle_connect(auth):
+        """Handle client connection with JWT verification"""
+        try:
+            token = None
+            if isinstance(auth, dict):
+                token = auth.get('token')
+            if not token:
+                token = request.args.get('token')
+            if not token:
+                return False  # reject connection
+
+            data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            user_id = str(data.get('user_id') or '')
+            if not user_id:
+                return False
+
+            # Persist claims in Socket.IO session for later handlers
+            session['user_id'] = user_id
+            session['name'] = data.get('name')
+            session['email'] = data.get('email')
+
+            emit('connection_response', {'status': 'connected'})
+        except Exception:
+            # Any failure results in connection reject
+            return False
     
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -48,20 +87,20 @@ def register_handlers():
     
     @socketio.on('join_room')
     def handle_join_room(data):
-        """Handle client joining a room (supports acknowledgement callback)"""
+        """Handle client joining a room with authenticated user from session."""
         try:
             # Validate required data
             if not data or 'room_id' not in data:
                 msg = 'Room ID is required'
                 emit('error', {'message': msg})
                 return {'error': msg}
-            if 'user_id' not in data:
-                msg = 'User ID is required'
+
+            room_id = data['room_id']
+            user_id = session.get('user_id')
+            if not user_id:
+                msg = 'Unauthorized'
                 emit('error', {'message': msg})
                 return {'error': msg}
-            
-            room_id = data['room_id']
-            user_id = data['user_id']
             
             # Check if room exists
             room_data = Room.find_by_id(room_id)
@@ -70,17 +109,20 @@ def register_handlers():
                 emit('error', {'message': msg})
                 return {'error': msg}
             
-            # Check if room is password protected (normalize and compare safely)
+            # Check if room is password protected (verify via hash; support legacy plaintext)
             try:
-                room_pw = str(room_data.get('password') or '').strip()
+                room_pw_hash = room_data.get('password_hash')
+                room_pw_plain = room_data.get('password')  # legacy documents
                 payload_pw = str((data.get('password') if data else '') or '').strip()
-                if room_pw:
-                    if payload_pw != room_pw:
-                        print(f"[socket] Password mismatch: room_pw_len={len(room_pw)}, payload_pw_len={len(payload_pw)}")
+                if room_pw_hash:
+                    if not payload_pw or not check_password_hash(room_pw_hash, payload_pw):
                         emit('error', {'message': 'Invalid password'})
                         return {'error': 'Invalid password'}
-            except Exception as pw_err:
-                print(f"[socket] Password validation error: {pw_err}")
+                elif room_pw_plain:
+                    if payload_pw != str(room_pw_plain).strip():
+                        emit('error', {'message': 'Invalid password'})
+                        return {'error': 'Invalid password'}
+            except Exception:
                 emit('error', {'message': 'Invalid password'})
                 return {'error': 'Invalid password'}
             
@@ -124,19 +166,18 @@ def register_handlers():
     
     @socketio.on('leave_room')
     def handle_leave_room(data):
-        """Handle client leaving a room"""
+        """Handle client leaving a room; user is taken from session."""
         try:
             # Validate required data
             if 'room_id' not in data:
                 emit('error', {'message': 'Room ID is required'})
                 return
             
-            if 'user_id' not in data:
-                emit('error', {'message': 'User ID is required'})
-                return
-            
             room_id = data['room_id']
-            user_id = data['user_id']
+            user_id = session.get('user_id')
+            if not user_id:
+                emit('error', {'message': 'Unauthorized'})
+                return
             
             # Remove user from room
             try:
@@ -165,15 +206,15 @@ def register_handlers():
     
     @socketio.on('update_playback')
     def on_update_playback(data):
-        """Handle playback control (supports acknowledgement callback)"""
+        """Handle playback control (supports acknowledgement callback); user from session."""
         try:
             print(f"🎮 update_playback event: {data}")
             
             room_id = data.get('room_id')
-            user_id = data.get('user_id')
             playback_state = data.get('playback_state')
-            
-            if not all([room_id, user_id, playback_state]):
+            user_id = session.get('user_id')
+
+            if not all([room_id, playback_state, user_id]):
                 msg = 'Missing required playback data'
                 emit('error', {'message': msg})
                 return {'error': msg}
@@ -244,15 +285,11 @@ def register_handlers():
     
     @socketio.on('chat_message')
     def handle_chat_message(data):
-        """Handle chat message"""
+        """Handle chat message with authenticated user."""
         try:
             # Validate required data
             if 'room_id' not in data:
                 emit('error', {'message': 'Room ID is required'})
-                return
-            
-            if 'user_id' not in data:
-                emit('error', {'message': 'User ID is required'})
                 return
             
             if 'message' not in data:
@@ -260,8 +297,11 @@ def register_handlers():
                 return
             
             room_id = data['room_id']
-            user_id = data['user_id']
             message = data['message']
+            user_id = session.get('user_id')
+            if not user_id:
+                emit('error', {'message': 'Unauthorized'})
+                return
             
             # Check if room exists
             room_data = Room.find_by_id(room_id)
@@ -298,15 +338,11 @@ def register_handlers():
     
     @socketio.on('reaction')
     def handle_reaction(data):
-        """Handle user reaction"""
+        """Handle user reaction with authenticated user."""
         try:
             # Validate required data
             if 'room_id' not in data:
                 emit('error', {'message': 'Room ID is required'})
-                return
-            
-            if 'user_id' not in data:
-                emit('error', {'message': 'User ID is required'})
                 return
             
             if 'reaction' not in data:
@@ -314,8 +350,11 @@ def register_handlers():
                 return
             
             room_id = data['room_id']
-            user_id = data['user_id']
             reaction = data['reaction']
+            user_id = session.get('user_id')
+            if not user_id:
+                emit('error', {'message': 'Unauthorized'})
+                return
             
             # Check if room exists
             room_data = Room.find_by_id(room_id)
