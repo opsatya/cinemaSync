@@ -81,6 +81,10 @@ const MyRooms = () => {
     allowChat: true,
     allowReactions: true,
   });
+  // Share dialog state
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareLink, setShareLink] = useState('');
+  const [shareCopied, setShareCopied] = useState(false);
 
   useEffect(() => {
     const loadRooms = async () => {
@@ -180,11 +184,13 @@ const MyRooms = () => {
     }
   };
 
-  const handleShare = async (room) => {
+  const handleShare = (room) => {
     try {
       const roomId = String(room.room_id || room.id);
       const url = `${window.location.origin}/theater/${roomId}`;
-      await navigator.clipboard.writeText(url);
+      setShareLink(url);
+      setShareCopied(false);
+      setShareDialogOpen(true);
     } catch (e) {
       console.warn('Share failed:', e);
     }
@@ -547,6 +553,58 @@ const MyRooms = () => {
               <Button variant="contained" onClick={handleSaveEdit} disabled={savingEdit}>
                 {savingEdit ? 'Saving...' : 'Save'}
               </Button>
+            </DialogActions>
+          </Dialog>
+
+          {/* Share Link Dialog */}
+          <Dialog open={shareDialogOpen} onClose={() => setShareDialogOpen(false)} fullWidth maxWidth="sm">
+            <DialogTitle>Share Room Link</DialogTitle>
+            <DialogContent dividers>
+              <TextField
+                fullWidth
+                label="Room link"
+                value={shareLink}
+                InputProps={{ readOnly: true }}
+                onFocus={(e) => e.target.select()}
+                sx={{ mt: 1 }}
+              />
+              {shareCopied && (
+                <Alert severity="success" sx={{ mt: 2 }}>
+                  Link copied to clipboard
+                </Alert>
+              )}
+            </DialogContent>
+            <DialogActions>
+              {typeof navigator !== 'undefined' && navigator.share ? (
+                <Button
+                  onClick={async () => {
+                    try {
+                      await navigator.share({
+                        title: 'Join my CinemaSync room',
+                        url: shareLink,
+                      });
+                    } catch (e) {
+                      // ignore canceled share
+                    }
+                  }}
+                >
+                  Share
+                </Button>
+              ) : null}
+              <Button
+                variant="contained"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(shareLink);
+                    setShareCopied(true);
+                  } catch (e) {
+                    setError('Failed to copy link');
+                  }
+                }}
+              >
+                Copy link
+              </Button>
+              <Button onClick={() => setShareDialogOpen(false)}>Close</Button>
             </DialogActions>
           </Dialog>
         </Box>

@@ -20,6 +20,7 @@ import {
   DialogActions,
   CircularProgress,
   Alert,
+  Snackbar,
   TextField,
 } from '@mui/material';
 import {
@@ -30,6 +31,7 @@ import {
   SkipNext,
   Chat as ChatIcon,
   PeopleAlt,
+  Share as ShareIcon,
   Fullscreen,
   Settings,
   Close,
@@ -67,6 +69,8 @@ const Theater = () => {
   const [reaction, setReaction] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareMsg, setShareMsg] = useState('');
   
   // FIXED: Better joining state management
   const [roomJoinStatus, setRoomJoinStatus] = useState('initial'); // 'initial', 'joining', 'joined', 'failed'
@@ -123,6 +127,32 @@ const Theater = () => {
     if (!roomData || !userId) return false;
     return String(roomData.host_id) === String(userId);
   }, []);
+  
+  // Share room link helper using Web Share API with clipboard fallback
+  const shareRoomLink = useCallback(async () => {
+    try {
+      const url = `${window.location.origin}/theater/${roomId}`;
+      const title = room?.name || 'CinemaSync Room';
+      const text = 'Join my CinemaSync room';
+      if (navigator.share) {
+        await navigator.share({ title, text, url });
+        setShareMsg('Share dialog opened');
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareMsg('Link copied to clipboard');
+      }
+      setShareOpen(true);
+    } catch (e) {
+      try {
+        const fallbackUrl = `${window.location.origin}/theater/${roomId}`;
+        await navigator.clipboard.writeText(fallbackUrl);
+        setShareMsg('Link copied to clipboard');
+        setShareOpen(true);
+      } catch {
+        setError('Failed to share/copy room link');
+      }
+    }
+  }, [room?.name, roomId]);
   
   // Fetch room details on mount
   useEffect(() => {
@@ -791,6 +821,11 @@ const Theater = () => {
                       </IconButton>
                     </Tooltip>
                   )}
+                  <Tooltip title="Share room link">
+                    <IconButton color="primary" onClick={shareRoomLink}>
+                      <ShareIcon />
+                    </IconButton>
+                  </Tooltip>
                   <Tooltip title="Settings">
                     <IconButton color="primary">
                       <Settings />
@@ -1135,6 +1170,13 @@ const Theater = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      <Snackbar
+        open={shareOpen}
+        autoHideDuration={2000}
+        onClose={() => setShareOpen(false)}
+        message={shareMsg}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
     </motion.div>
   );
 };
