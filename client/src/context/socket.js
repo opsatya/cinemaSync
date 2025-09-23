@@ -16,9 +16,7 @@ if (import.meta.env.VITE_DEBUG_LOGS === 'true') {
 
 
 export const socket = io(SOCKET_URL, {
-  autoConnect: false, // Don't connect automatically
-  // Force HTTP long-polling to avoid WebSocket upgrade errors when the
-  // backend server isn't running a WebSocket-capable worker.
+  autoConnect: false,
   transports: ['polling'],
   upgrade: false,
   path: '/socket.io',

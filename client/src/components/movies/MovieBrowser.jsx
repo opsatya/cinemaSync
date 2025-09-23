@@ -32,7 +32,7 @@ import {
   Link as LinkIcon
 } from '@mui/icons-material';
 import { Link } from 'react-router-dom';
-import { fetchMoviesList, searchMovies, getRecentMovies, getStreamLink, getGoogleHealth, getGoogleTokensStatus, getGoogleAuthUrl } from '../../utils/api';
+import { fetchMoviesList, searchMovies, getRecentMovies, getStreamLink, getGoogleHealth, getGoogleTokensStatus, getGoogleAuthUrl, fetchDriveVideos } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
 const MovieBrowser = ({ onSelectMovie, roomId }) => {
