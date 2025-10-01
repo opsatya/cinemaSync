@@ -7,6 +7,7 @@ import os
 import jwt
 from datetime import datetime
 from googleapiclient.http import MediaIoBaseDownload
+from google.auth.exceptions import RefreshError
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 drive_service = DriveService()
@@ -156,6 +157,25 @@ def stream_file(file_id):
             print(f"Failed to save metadata to MongoDB: {e}")
         
         return response
+    except RefreshError as e:
+        # Invalidate stored tokens and clear cached Drive service for this user
+        try:
+            if request.args.get('owner') == 'user':
+                from app.models import UserToken
+                # user_id was computed earlier in the handler (may come from args or JWT)
+                if 'user_id' in locals() and user_id:
+                    UserToken.invalidate_tokens(user_id, 'google', reason='invalid_grant')
+                    try:
+                        drive_service._user_services.pop(user_id, None)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return jsonify({
+            'success': False,
+            'code': 'reauth_required',
+            'message': 'Google authorization expired or revoked. Please reconnect your Google Drive account.'
+        }), 401
     except Exception as e:
         return jsonify({
             'success': False,
@@ -271,6 +291,22 @@ def list_user_files():
         user_id = g.current_user_id
         files = drive_service.list_user_videos(user_id)
         return jsonify({'success': True, 'files': files, 'count': len(files)}), 200
+    except RefreshError as e:
+        # Invalidate tokens and clear cached service
+        try:
+            from app.models import UserToken
+            UserToken.invalidate_tokens(g.current_user_id, 'google', reason='invalid_grant')
+            try:
+                drive_service._user_services.pop(g.current_user_id, None)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return jsonify({
+            'success': False,
+            'code': 'reauth_required',
+            'message': 'Google authorization expired or revoked. Please reconnect your Google Drive account.'
+        }), 401
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
@@ -327,5 +363,21 @@ def upload_user_file():
             print(f"Failed to save uploaded metadata: {e}")
 
         return jsonify({'success': True, 'file': result}), 201
+    except RefreshError as e:
+        # Invalidate tokens and clear cached service
+        try:
+            from app.models import UserToken
+            UserToken.invalidate_tokens(g.current_user_id, 'google', reason='invalid_grant')
+            try:
+                drive_service._user_services.pop(g.current_user_id, None)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return jsonify({
+            'success': False,
+            'code': 'reauth_required',
+            'message': 'Google authorization expired or revoked. Please reconnect your Google Drive account.'
+        }), 401
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500

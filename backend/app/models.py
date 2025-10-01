@@ -363,6 +363,30 @@ class UserToken:
             print(f"❌ Error getting tokens: {e}")
             return None
 
+    @staticmethod
+    def invalidate_tokens(user_id, provider, reason=None):
+        """Invalidate (clear) stored OAuth tokens for a user/provider."""
+        try:
+            collection = UserToken.get_collection()
+            update_doc = {
+                'access_token': None,
+                'refresh_token': None,
+                'access_token_enc': None,
+                'refresh_token_enc': None,
+                'invalidated_at': datetime.utcnow(),
+                'invalid_reason': reason,
+                'updated_at': datetime.utcnow()
+            }
+            result = collection.update_one(
+                {'user_id': str(user_id), 'provider': provider},
+                {'$set': update_doc}
+            )
+            print(f"🔒 Tokens invalidated for user={user_id}, provider={provider}, matched={result.matched_count}, modified={result.modified_count}")
+            return result.matched_count > 0
+        except Exception as e:
+            print(f"❌ Error invalidating tokens: {e}")
+            return False
+
 # User management model for persistent user data
 class User:
     """User management model for persistent user data"""

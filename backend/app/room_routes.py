@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 import json
 from werkzeug.security import generate_password_hash, check_password_hash
+from google.auth.exceptions import RefreshError
 
 room_bp = Blueprint('room', __name__, url_prefix='/api/rooms')
 
@@ -818,6 +819,13 @@ def get_user_drive_videos():
             'videos': videos
         }), 200
         
+    except RefreshError as e:
+        print(f"❌ RefreshError getting user drive videos: {e}")
+        return jsonify({
+            'success': False,
+            'code': 'reauth_required',
+            'message': 'Google authorization expired or revoked. Please reconnect your Google Drive account.'
+        }), 401
     except Exception as e:
         print(f"❌ Error getting user drive videos: {e}")
         print(f"   Error type: {type(e).__name__}")

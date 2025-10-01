@@ -6,6 +6,7 @@ import requests
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -131,18 +132,31 @@ class DriveService:
             ]
         )
         print(f"   OAuth scopes for user {user_id}: {getattr(creds, 'scopes', None)}")
-        # Refresh if needed
-        if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
-            # Persist updated access token/expiry
-            updated = {
-                'access_token': creds.token,
-                'refresh_token': creds.refresh_token,
-                'token_type': 'Bearer',
-                'scope': 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
-                'expiry': creds.expiry.isoformat() if getattr(creds, 'expiry', None) else None
-            }
-            UserToken.save_tokens(user_id, 'google', updated)
+        # Refresh if needed, handle revoked/expired refresh tokens gracefully
+        try:
+            if not creds.valid and creds.refresh_token:
+                creds.refresh(Request())
+                # Persist updated access token/expiry
+                updated = {
+                    'access_token': creds.token,
+                    'refresh_token': creds.refresh_token,
+                    'token_type': 'Bearer',
+                    'scope': 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file',
+                    'expiry': creds.expiry.isoformat() if getattr(creds, 'expiry', None) else None
+                }
+                UserToken.save_tokens(user_id, 'google', updated)
+        except RefreshError as e:
+            msg = str(e)
+            # Invalidate tokens if refresh token is invalid/revoked
+            try:
+                reason = 'invalid_grant' if 'invalid_grant' in msg.lower() else 'refresh_error'
+                UserToken.invalidate_tokens(user_id, 'google', reason=reason)
+            except Exception:
+                pass
+            # Drop any cached service to avoid reusing bad creds
+            self._user_services.pop(user_id, None)
+            # Propagate so routes can return 401 with reauth_required
+            raise
         return creds
 
     def user_service(self, user_id):
