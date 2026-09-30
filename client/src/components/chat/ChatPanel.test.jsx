@@ -23,4 +23,21 @@ describe('ChatPanel', () => {
 
     expect(screen.getByText('Hello there')).toBeInTheDocument()
   })
+
+  it('does not crash when a participant entry has no user_id', () => {
+    const messages = [
+      { id: '1', user_id: 'user-2', text: 'Hello there', timestamp: Date.now() },
+    ]
+
+    render(
+      <ChatPanel
+        users={[{ is_host: true }, { user_id: 'user-2', name: 'Alice' }]}
+        roomId="ROOM1"
+        messages={messages}
+        setMessages={() => {}}
+      />
+    )
+
+    expect(screen.getByText('Hello there')).toBeInTheDocument()
+  })
 })

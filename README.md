@@ -5,9 +5,9 @@ Bringing friends together through movies. This repository contains a full-stack 
 - A Vite/React frontend for creating and joining rooms, synchronized playback, chat, reactions, and Drive browsing.
 
 Repository structure
-- backend/ — Flask API, Google Drive and Firebase integrations, Socket.IO server
+- server/ — Flask API, Google Drive and Firebase integrations, Socket.IO server
 - client/ — Vite + React application (Material UI), Socket.IO client, Google Drive browser
-- backend/.env.example — backend environment template
+- server/.env.example — backend environment template
 - client/.env.example — frontend environment template
 
 Key features
@@ -39,14 +39,14 @@ cd cinemaSync
 
 2) Backend (terminal A)
 - Create venv and install dependencies:
-  - python -m venv backend/.venv
-  - source backend/.venv/bin/activate  (Windows: backend\\.venv\\Scripts\\activate)
-  - pip install -r backend/requirements.txt
+  - python -m venv server/.venv
+  - source server/.venv/bin/activate  (Windows: backend\\.venv\\Scripts\\activate)
+  - pip install -r server/requirements.txt
 - Create .env:
-  - cp backend/.env.example backend/.env
+  - cp server/.env.example server/.env
   - Fill variables (see “Backend environment variables” below)
 - Run the backend:
-  - python backend/run.py
+  - python server/run.py
   - Server at http://127.0.0.1:5000 (REST base: /api)
 
 3) Frontend (terminal B)
@@ -101,17 +101,17 @@ Common workflows
 Project details
 
 Backend (Flask + Socket.IO)
-- Launch entry: backend/run.py
+- Launch entry: server/run.py
 - REST routes:
-  - backend/app/routes.py — movies list/search/stream/metadata, recent, health
-  - backend/app/room_routes.py — rooms CRUD and playback REST endpoints
-  - backend/app/google_oauth_routes.py — Google OAuth endpoints
-  - backend/app/auth_routes.py — exchange identity for backend JWT
+  - server/app/routes.py — movies list/search/stream/metadata, recent, health
+  - server/app/room_routes.py — rooms CRUD and playback REST endpoints
+  - server/app/google_oauth_routes.py — Google OAuth endpoints
+  - server/app/auth_routes.py — exchange identity for backend JWT
 - Socket.IO:
-  - backend/app/socket_manager.py — connection, join_room, leave_room, update_playback, chat_message, reaction
+  - server/app/socket_manager.py — connection, join_room, leave_room, update_playback, chat_message, reaction
   - Acknowledgements (acks) supported for join_room and update_playback; handlers return {'ok': True} or {'error': '...'} for precise errors
 - Models (MongoDB):
-  - backend/app/models.py — Room, MovieMetadata, User, UserToken; includes indexes and helpers
+  - server/app/models.py — Room, MovieMetadata, User, UserToken; includes indexes and helpers
 
 Frontend (Vite + React + MUI)
 - App entry: client/src/main.jsx, client/src/App.jsx
@@ -187,7 +187,15 @@ Troubleshooting
 
 - CORS / Base URL mismatch
   - Set client VITE_API_BASE_URL to http://127.0.0.1:5000/api
-  - CORS is configured in backend/app/__init__.py; allowed origins include localhost:5173 and 127.0.0.1:5173
+  - CORS is configured in server/app/__init__.py; allowed origins include localhost:5173 and 127.0.0.1:5173
+
+Running tests
+- Backend (pytest + mongomock, no real MongoDB needed):
+  - pip install -r server/requirements-dev.txt
+  - cd server && pytest
+- Frontend (Vitest + React Testing Library):
+  - cd client
+  - npm test
 
 Security
 - Use a strong JWT_SECRET in production
@@ -203,11 +211,11 @@ License
 - This project is provided as-is. Add your preferred license here if applicable.
 
 Useful links to files
-- Backend entry: backend/run.py
-- Flask app: backend/app/__init__.py
-- REST routes: backend/app/routes.py, backend/app/room_routes.py
-- Socket.IO: backend/app/socket_manager.py
-- Models: backend/app/models.py
+- Backend entry: server/run.py
+- Flask app: server/app/__init__.py
+- REST routes: server/app/routes.py, server/app/room_routes.py
+- Socket.IO: server/app/socket_manager.py
+- Models: server/app/models.py
 - Frontend app: client/src/App.jsx
 - Theater page: client/src/pages/Theater.jsx
 - Movie Browser: client/src/components/movies/MovieBrowser.jsx

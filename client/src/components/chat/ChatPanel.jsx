@@ -23,9 +23,8 @@ const ChatPanel = ({ users, roomId, messages, setMessages }) => {
   const userMap = useMemo(() => {
     const map = {};
     users.forEach(user => {
-      const participant = user.user_id ? user : user.participants[0];
-      if (participant) {
-        map[participant.user_id] = participant;
+      if (user?.user_id) {
+        map[user.user_id] = user;
       }
     });
     return map;

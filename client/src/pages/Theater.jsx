@@ -42,6 +42,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../context/socket';
 import { getRoomDetails, getUserDriveStreamUrl, setRoomVideo, addPlaylistItem, removePlaylistItem, playPlaylistItem } from '../utils/api';
+import { isDirectLinkType, isGoogleDriveType } from '../utils/movieSource';
 // Import components
 import VideoPlayer from '../components/theater/VideoPlayer';
 import ChatPanel from '../components/chat/ChatPanel';
@@ -95,12 +96,11 @@ const Theater = () => {
   const videoRef = useRef(null);
 
   // Derive presets from room.movie_source to avoid showing Browse UI when a video is already set
-  const sourceType = String(room?.movie_source?.type || '').toLowerCase();
   const hasPresetDrive =
-    (sourceType === 'google_drive' || sourceType === 'googledrive') &&
+    isGoogleDriveType(room?.movie_source?.type) &&
     Boolean(room?.movie_source?.video_id || room?.movie_source?.value);
   const hasPresetDirect =
-    sourceType === 'directlink' && Boolean(room?.movie_source?.value);
+    isDirectLinkType(room?.movie_source?.type) && Boolean(room?.movie_source?.value);
 
 
   // FIXED: Helper to check if user can control playback (now includes host check)
@@ -190,7 +190,7 @@ const Theater = () => {
             video_name: ms.video_name,
           });
 
-          if (type === 'googledrive' || type === 'google_drive') {
+          if (isGoogleDriveType(type)) {
             if (fileId) {
               setSelectedMovie({
                 kind: 'drive',
@@ -201,7 +201,7 @@ const Theater = () => {
             } else {
               console.warn('⚠️ [Theater] Drive source provided but missing video_id/value.');
             }
-          } else if (type === 'directlink') {
+          } else if (isDirectLinkType(type)) {
             if (hasDirectUrl) {
               setSelectedMovie({
                 kind: 'direct',
@@ -216,8 +216,11 @@ const Theater = () => {
           // For 'uploadlater' or unknown types, selectedMovie remains null (correct)
         }
         
-        // Check if room requires password
-        if ((roomDetails.is_private || roomDetails.password) && roomJoinStatus !== 'joined') {
+        // Check if room requires password. `password_required` (not
+        // `is_private`, which just means "not publicly listed", and not
+        // `password`, which the backend never sends back) is the field the
+        // backend computes specifically to answer this question.
+        if (roomDetails.password_required && roomJoinStatus !== 'joined') {
           setShowPasswordDialog(true);
         }
       } catch (err) {
@@ -257,7 +260,7 @@ const Theater = () => {
 
     const payload = { room_id: roomId, user_id: currentUser.uid };
     const enteredPassword = (passwordRef.current || '').trim();
-    const requiresPassword = Boolean(room?.is_private) || Boolean(room?.password) || enteredPassword.length > 0;
+    const requiresPassword = Boolean(room?.password_required) || enteredPassword.length > 0;
     
     if (requiresPassword) {
       if (!enteredPassword) {
@@ -333,7 +336,7 @@ const Theater = () => {
         const fileId = ms?.video_id || ms?.value || null;
         const directUrl = typeof ms?.value === 'string' ? ms.value : null;
 
-        if (t === 'googledrive' || t === 'google_drive') {
+        if (isGoogleDriveType(t)) {
           if (fileId) {
             setSelectedMovie({
               kind: 'drive',
@@ -344,7 +347,7 @@ const Theater = () => {
           } else {
             console.warn('⚠️ [Theater] onRoomJoined Drive source present but missing file id.');
           }
-        } else if (t === 'directlink') {
+        } else if (isDirectLinkType(t)) {
           if (directUrl) {
             setSelectedMovie({
               kind: 'direct',
@@ -406,11 +409,11 @@ const Theater = () => {
       try {
         const ms = payload?.movie_source || {};
         const t = String(ms?.type || '').toLowerCase();
-        if (t === 'googledrive' || t === 'google_drive') {
+        if (isGoogleDriveType(t)) {
           if (ms.video_id) {
             setSelectedMovie({ kind: 'drive', id: ms.video_id, name: ms.video_name || 'Google Drive Video' });
           }
-        } else if (t === 'directlink' && ms.value) {
+        } else if (isDirectLinkType(t) && ms.value) {
           setSelectedMovie({ kind: 'direct', url: ms.value, name: 'Direct Video' });
         }
         setRoom((prev) => ({ ...(prev || {}), movie_source: ms }));
@@ -530,7 +533,7 @@ const Theater = () => {
       const ms = room?.movie_source;
       if (!ms) return;
       const t = String(ms.type || '').toLowerCase();
-      if (t === 'googledrive' || t === 'google_drive') {
+      if (isGoogleDriveType(t)) {
         const id = ms.video_id || ms.value;
         if (id && (!selectedMovie || selectedMovie.kind !== 'drive' || selectedMovie.id !== id)) {
           setSelectedMovie({
@@ -539,7 +542,7 @@ const Theater = () => {
             name: ms.video_name || 'Google Drive Video'
           });
         }
-      } else if (t === 'directlink') {
+      } else if (isDirectLinkType(t)) {
         const url = ms.value;
         if (url && (!selectedMovie || selectedMovie.kind !== 'direct' || selectedMovie.url !== url)) {
           setSelectedMovie({
@@ -703,9 +706,9 @@ const Theater = () => {
       const updatedRoom = await playPlaylistItem(roomId, itemId, backendToken);
       setRoom(updatedRoom || room);
       const ms = updatedRoom?.movie_source || {};
-      if (ms.type === 'google_drive' && ms.video_id) {
+      if (isGoogleDriveType(ms.type) && ms.video_id) {
         setSelectedMovie({ kind: 'drive', id: ms.video_id, name: ms.video_name || 'Google Drive Video' });
-      } else if (ms.type === 'direct_link' && ms.value) {
+      } else if (isDirectLinkType(ms.type) && ms.value) {
         setSelectedMovie({ kind: 'direct', url: ms.value, name: 'Direct Video' });
       }
       setIsPlaying(false);
@@ -1014,7 +1017,7 @@ const Theater = () => {
                       </IconButton>
                     </span>
                   </Tooltip>
-                  {isHost && !(selectedMovie?.kind === 'direct' || String(room?.movie_source?.type || '').toLowerCase() === 'directlink') && (
+                  {isHost && !(selectedMovie?.kind === 'direct' || isDirectLinkType(room?.movie_source?.type)) && (
                     <Button
                       variant="outlined"
                       size="small"

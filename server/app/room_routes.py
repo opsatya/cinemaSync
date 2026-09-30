@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request, g
 from app.models import Room, UserToken
 from app.auth_middleware import token_required  # IMPORT THE MIDDLEWARE
 from app.drive_service import DriveService
+from app.routes import drive_service
 from app.socket_manager import socketio
 from app.utils import rate_limit
 import os
