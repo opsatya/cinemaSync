@@ -302,6 +302,11 @@ class UserToken:
             enc_access = _encrypt_value(access_token) if access_token else None
             enc_refresh = _encrypt_value(refresh_token) if refresh_token else None
 
+            would_store_plaintext = (access_token or refresh_token) and not (enc_access or enc_refresh)
+            if would_store_plaintext and os.getenv('FLASK_ENV') == 'production':
+                print("❌ Refusing to store OAuth tokens in plaintext in production — set TOKENS_ENC_KEY")
+                return False
+
             token_record = {
                 'user_id': str(user_id),
                 'provider': provider,
@@ -547,6 +552,7 @@ class Room:
                     'current_time': 0,
                     'last_updated': datetime.utcnow()
                 },
+                'playlist': [],
                 'created_at': datetime.utcnow(),
                 'updated_at': datetime.utcnow(),
                 'is_active': True

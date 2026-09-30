@@ -109,7 +109,7 @@ const ChatPanel = ({ users, roomId, messages, setMessages }) => {
       >
         <AnimatePresence>
           {messages.map((msg) => (
-            <motion.div_
+            <motion.div
               key={msg.timestamp || msg.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -135,7 +135,7 @@ const ChatPanel = ({ users, roomId, messages, setMessages }) => {
                   </Typography>
                 </Box>
               ) : (
-                <Box_
+                <Box
                   sx={{
                     display: 'flex',
                     alignItems: 'flex-start',
@@ -143,7 +143,6 @@ const ChatPanel = ({ users, roomId, messages, setMessages }) => {
                     mb: 1,
                   }}
                 >
-                  _
                   <Avatar
                     sx={{
                       bgcolor: msg.user_id === currentUser?.uid ? theme.palette.primary.main : theme.palette.secondary.main,
@@ -176,9 +175,9 @@ const ChatPanel = ({ users, roomId, messages, setMessages }) => {
                       <Typography variant="body2">{msg.text}</Typography>
                     </Paper>
                   </Box>
-                </Box_>
+                </Box>
               )}
-            </motion.div_>
+            </motion.div>
           ))}
           <div ref={messagesEndRef} />
         </AnimatePresence>

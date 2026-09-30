@@ -10,6 +10,9 @@ import {
 } from 'firebase/auth';
 import { auth } from '../firebase/config';
 import { exchangeToken, testBackendConnectivity } from '../utils/api';
+import { isJwtExpired } from './jwt';
+
+const TOKEN_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Custom hook for Firebase authentication with backend token exchange
@@ -156,7 +159,7 @@ export const useFirebaseAuth = () => {
 
       if (user) {
         const existingToken = localStorage.getItem('backendToken');
-        if (existingToken) {
+        if (existingToken && !isJwtExpired(existingToken)) {
           setBackendToken(existingToken);
         } else {
           await exchangeForBackendToken(user);
@@ -174,6 +177,19 @@ export const useFirebaseAuth = () => {
       unsubscribe();
     };
   }, []);
+
+  // A tab left open past the backend JWT's TTL would otherwise sit with a
+  // dead token until the next Firebase auth-state event (which may never
+  // come). Proactively refresh before it expires.
+  useEffect(() => {
+    if (!currentUser || !backendToken) return;
+    const interval = setInterval(() => {
+      if (isJwtExpired(backendToken)) {
+        exchangeForBackendToken(currentUser);
+      }
+    }, TOKEN_CHECK_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [currentUser, backendToken]);
 
   return {
     currentUser,

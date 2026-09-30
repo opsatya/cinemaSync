@@ -17,8 +17,7 @@ if (import.meta.env.VITE_DEBUG_LOGS === 'true') {
 
 export const socket = io(SOCKET_URL, {
   autoConnect: false,
-  transports: ['polling'],
-  upgrade: false,
+  transports: ['polling', 'websocket'],
   path: '/socket.io',
   timeout: 20000,
   withCredentials: false,

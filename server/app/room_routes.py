@@ -3,9 +3,11 @@ from app.models import Room, UserToken
 from app.auth_middleware import token_required  # IMPORT THE MIDDLEWARE
 from app.drive_service import DriveService
 from app.socket_manager import socketio
+from app.utils import rate_limit
 import os
 import traceback
 import sys
+import uuid
 from datetime import datetime
 import json
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -377,6 +379,7 @@ def get_my_rooms():
         }), 500
 
 @room_bp.route('/<string:room_id>/join', methods=['POST'])
+@rate_limit(limit=20, per=60)
 @token_required
 def join_room(room_id):
     """Join a room"""
@@ -698,88 +701,6 @@ def delete_room(room_id):
         traceback.print_exc()
         return jsonify({'success': False, 'message': str(e)}), 500
 
-@room_bp.route('/debug/user/<string:user_id>', methods=['GET'])
-def debug_user_rooms_detailed(user_id):
-    """Enhanced debug endpoint to analyze user room associations"""
-    try:
-        print(f"🔍 DEBUG ENDPOINT: Analyzing user {user_id}")
-        
-        from app.models import Room
-        collection = Room.get_collection()
-        
-        # Get ALL rooms for debugging
-        all_rooms = list(collection.find({}))
-        
-        print(f"   Total rooms in database: {len(all_rooms)}")
-        
-        result = {
-            'debug_info': {
-                'searched_user_id': user_id,
-                'total_rooms_in_db': len(all_rooms),
-                'timestamp': datetime.utcnow().isoformat()
-            },
-            'rooms_analysis': [],
-            'matching_rooms': []
-        }
-        
-        for room in all_rooms:
-            # Detailed analysis of each room
-            analysis = {
-                'room_id': room.get('room_id'),
-                'name': room.get('name'),
-                'host_id': room.get('host_id'),
-                'host_id_type': type(room.get('host_id')).__name__,
-                'is_active': room.get('is_active'),
-                'participants': room.get('participants', []),
-                'participants_count': len(room.get('participants', [])),
-                'user_matches': {
-                    'is_host': str(room.get('host_id')) == str(user_id),
-                    'in_participants': False,
-                    'participant_details': []
-                }
-            }
-            
-            # Check participants
-            for p in room.get('participants', []):
-                participant_info = {
-                    'participant_data': p,
-                    'participant_type': type(p).__name__,
-                    'matches_user': False
-                }
-                
-                if isinstance(p, dict):
-                    p_user_id = p.get('user_id')
-                    participant_info['user_id'] = p_user_id
-                    participant_info['user_id_type'] = type(p_user_id).__name__
-                    participant_info['matches_user'] = str(p_user_id) == str(user_id)
-                    if participant_info['matches_user']:
-                        analysis['user_matches']['in_participants'] = True
-                elif isinstance(p, str):
-                    participant_info['matches_user'] = str(p) == str(user_id)
-                    if participant_info['matches_user']:
-                        analysis['user_matches']['in_participants'] = True
-                
-                analysis['user_matches']['participant_details'].append(participant_info)
-            
-            result['rooms_analysis'].append(analysis)
-            
-            # If user matches, add to matching rooms
-            if analysis['user_matches']['is_host'] or analysis['user_matches']['in_participants']:
-                result['matching_rooms'].append(room)
-        
-        print(f"   Found {len(result['matching_rooms'])} matching rooms for user")
-        return jsonify(result)
-        
-    except Exception as e:
-        error_msg = f'Debug endpoint error: {str(e)}'
-        print(f"❌ Debug Error: {error_msg}")
-        traceback.print_exc()
-        return jsonify({
-            'error': error_msg, 
-            'user_id': user_id,
-            'error_type': type(e).__name__
-        }), 500
-
 @room_bp.route('/videos/drive', methods=['GET'])
 @token_required
 def get_user_drive_videos():
@@ -943,3 +864,144 @@ def set_room_video(room_id):
             'success': False,
             'message': str(e)
         }), 500
+
+def _require_host(room_id, user_id):
+    """Fetch a room and verify user_id is its host. Returns (room, error_response)."""
+    room = Room.find_by_id(room_id)
+    if not room:
+        return None, (jsonify({'success': False, 'message': 'Room not found'}), 404)
+    if str(room.get('host_id')) != str(user_id):
+        return None, (jsonify({'success': False, 'message': 'Only room host can modify the playlist'}), 403)
+    return room, None
+
+def _verify_drive_access(user_id, video_id):
+    """Return True if user_id can currently access this Drive file. Called
+    right before broadcasting video_changed so a deleted/unshared file
+    doesn't get announced as playable to every viewer in the room."""
+    try:
+        svc = drive_service.user_service(user_id)
+        svc.files().get(fileId=video_id, fields='id').execute()
+        return True
+    except Exception:
+        return False
+
+@room_bp.route('/<string:room_id>/playlist', methods=['POST'])
+@token_required
+def add_playlist_item(room_id):
+    """Add an item to the room's playlist (host only)."""
+    try:
+        room, error = _require_host(room_id, g.current_user_id)
+        if error:
+            return error
+
+        data = request.get_json(silent=True) or {}
+        item_type = data.get('type')
+        video_name = data.get('video_name', '')
+
+        if item_type == 'google_drive':
+            video_id = data.get('video_id')
+            if not video_id:
+                return jsonify({'success': False, 'message': 'video_id is required for google_drive items'}), 400
+            item = {'item_id': str(uuid.uuid4()), 'type': 'google_drive', 'video_id': video_id, 'video_name': video_name}
+        elif item_type == 'direct_link':
+            value = data.get('value')
+            if not value:
+                return jsonify({'success': False, 'message': 'value is required for direct_link items'}), 400
+            item = {'item_id': str(uuid.uuid4()), 'type': 'direct_link', 'value': value}
+        else:
+            return jsonify({'success': False, 'message': "type must be 'google_drive' or 'direct_link'"}), 400
+
+        item['added_by'] = str(g.current_user_id)
+        item['added_at'] = datetime.utcnow().isoformat()
+
+        collection = Room.get_collection()
+        collection.update_one(
+            {'room_id': room_id},
+            {'$push': {'playlist': item}, '$set': {'updated_at': datetime.utcnow()}}
+        )
+
+        playlist = Room.find_by_id(room_id).get('playlist', [])
+        try:
+            socketio.emit('playlist_updated', {'room_id': room_id, 'playlist': playlist}, to=room_id)
+        except Exception as emit_err:
+            print(f"⚠️ Failed to emit playlist_updated: {emit_err}")
+
+        return jsonify({'success': True, 'playlist': playlist}), 201
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@room_bp.route('/<string:room_id>/playlist/<string:item_id>', methods=['DELETE'])
+@token_required
+def remove_playlist_item(room_id, item_id):
+    """Remove an item from the room's playlist (host only)."""
+    try:
+        room, error = _require_host(room_id, g.current_user_id)
+        if error:
+            return error
+
+        collection = Room.get_collection()
+        collection.update_one(
+            {'room_id': room_id},
+            {'$pull': {'playlist': {'item_id': item_id}}, '$set': {'updated_at': datetime.utcnow()}}
+        )
+
+        playlist = Room.find_by_id(room_id).get('playlist', [])
+        try:
+            socketio.emit('playlist_updated', {'room_id': room_id, 'playlist': playlist}, to=room_id)
+        except Exception as emit_err:
+            print(f"⚠️ Failed to emit playlist_updated: {emit_err}")
+
+        return jsonify({'success': True, 'playlist': playlist}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500
+
+@room_bp.route('/<string:room_id>/playlist/<string:item_id>/play', methods=['POST'])
+@token_required
+def play_playlist_item(room_id, item_id):
+    """Jump to playing a specific queued item (host only). The item stays
+    queued afterward — the host removes it manually if they don't want it
+    played again."""
+    try:
+        room, error = _require_host(room_id, g.current_user_id)
+        if error:
+            return error
+
+        item = next((i for i in room.get('playlist', []) if i.get('item_id') == item_id), None)
+        if not item:
+            return jsonify({'success': False, 'message': 'Playlist item not found'}), 404
+
+        if item['type'] == 'google_drive':
+            if not _verify_drive_access(g.current_user_id, item.get('video_id')):
+                return jsonify({
+                    'success': False,
+                    'message': 'This video is no longer accessible on Google Drive. It may have been deleted, unshared, or you may need to reconnect Google Drive.'
+                }), 409
+            movie_source = {'type': 'google_drive', 'video_id': item.get('video_id'), 'video_name': item.get('video_name', '')}
+        else:
+            movie_source = {'type': 'direct_link', 'value': item.get('value')}
+
+        collection = Room.get_collection()
+        collection.update_one(
+            {'room_id': room_id},
+            {'$set': {'movie_source': movie_source, 'updated_at': datetime.utcnow()}}
+        )
+
+        updated_room = Room.find_by_id(room_id)
+        if updated_room and '_id' in updated_room:
+            del updated_room['_id']
+        if updated_room:
+            updated_room['password_required'] = bool(updated_room.get('password_hash') or updated_room.get('password'))
+            updated_room.pop('password_hash', None)
+            updated_room.pop('password', None)
+
+        try:
+            socketio.emit('video_changed', {'room_id': room_id, 'movie_source': movie_source}, to=room_id)
+        except Exception as emit_err:
+            print(f"⚠️ Failed to emit video_changed: {emit_err}")
+
+        return jsonify({'success': True, 'room': updated_room}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': str(e)}), 500

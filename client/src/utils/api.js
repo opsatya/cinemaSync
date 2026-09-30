@@ -113,6 +113,38 @@ export const setRoomVideo = async (roomId, payload, token) => {
   return data.room;
 };
 
+// Playlist (host only): add/remove/jump-to a queued video
+export const addPlaylistItem = async (roomId, payload, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/playlist`, {
+    method: 'POST',
+    headers: getAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to add playlist item');
+  return data.playlist;
+};
+
+export const removePlaylistItem = async (roomId, itemId, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/playlist/${itemId}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to remove playlist item');
+  return data.playlist;
+};
+
+export const playPlaylistItem = async (roomId, itemId, token) => {
+  const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/playlist/${itemId}/play`, {
+    method: 'POST',
+    headers: getAuthHeaders(token),
+  });
+  const data = await res.json();
+  if (!data.success) throw new Error(data.message || 'Failed to play playlist item');
+  return data.room;
+};
+
 // Update room (host only). Supports partial updates like { name, description, is_private, password, enable_chat, enable_reactions }
 export const updateRoom = async (roomId, payload, token) => {
   const res = await fetch(`${API_BASE_URL}/rooms/${roomId}`, {
@@ -393,6 +425,9 @@ export default {
   getGoogleTokensStatus,
   fetchDriveVideos,
   setRoomVideo,
+  addPlaylistItem,
+  removePlaylistItem,
+  playPlaylistItem,
   updateRoom,
   deleteRoom,
 };

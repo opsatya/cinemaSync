@@ -1,8 +1,6 @@
 import os
 import json
 import time
-import jwt
-import requests
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -12,72 +10,6 @@ from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from googleapiclient.errors import HttpError
 import io
 import re
-
-def get_user_videos(access_token):
-    """Get user's Google Drive video files"""
-    try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
-        creds = Credentials(token=access_token)
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        # Query for video files only
-        query = "mimeType contains 'video/' and trashed=false"
-        
-        results = drive_service.files().list(
-            q=query,
-            fields="files(id, name, mimeType, size, createdTime)",
-            pageSize=50
-        ).execute()
-        
-        videos = results.get('files', [])
-        
-        return [{
-            'id': video['id'],
-            'name': video['name'],
-            'mimeType': video['mimeType'],
-            'size': video.get('size'),
-            'createdTime': video.get('createdTime')
-        } for video in videos]
-        
-    except Exception as e:
-        print(f"❌ Error getting user videos: {e}")
-        return []
-
-def get_video_stream_url(video_id, access_token):
-    """Get streamable URL for video"""
-    try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
-        creds = Credentials(token=access_token)
-        drive_service = build('drive', 'v3', credentials=creds)
-        
-        # Get file metadata and download URL
-        file_info = drive_service.files().get(
-            fileId=video_id,
-            fields="webContentLink, webViewLink"
-        ).execute()
-        
-        return {
-            'stream_url': f"https://drive.google.com/file/d/{video_id}/preview",
-            'download_url': file_info.get('webContentLink')
-        }
-        
-    except Exception as e:
-        print(f"❌ Error getting video stream URL: {e}")
-        return None
-
-JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
-API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:5000/api')
-
-# Enforce a real secret in production to prevent token forgery
-if os.getenv('FLASK_ENV') == 'production' and JWT_SECRET == 'your-secret-key':
-    raise RuntimeError('JWT_SECRET must be set via environment in production')
-
-def get_google_auth_url(user_id):
-    state = jwt.encode({'user_id': user_id}, JWT_SECRET, algorithm='HS256')
-    response = requests.get(f"{API_BASE_URL}/google/auth/url", params={'state': state})
-    print(response.json()['auth_url'])
 
 class DriveService:
     def __init__(self):
@@ -211,8 +143,10 @@ class DriveService:
         Returns:
             list: List of folders and movie files
         """
-        # Check cache first
-        cache_key = f"folder_{folder_id or 'root'}_recursive_{recursive}"
+        # Check cache first. max_depth must be part of the key: a shallow
+        # query's cached result must never be served to a deeper-recursion
+        # request for the same folder, or nested items go missing silently.
+        cache_key = f"folder_{folder_id or 'root'}_recursive_{recursive}_maxdepth_{max_depth}"
         if cache_key in self._cache and time.time() < self._cache_expiry.get(cache_key, 0):
             print(f"Using cached results for {cache_key}")
             return self._cache[cache_key]
@@ -249,19 +183,6 @@ class DriveService:
                         'modifiedTime': item.get('modifiedTime'),
                         'parent_folder_id': folder_id
                     }
-                    
-                    # If recursive and not at max depth, get contents of this folder
-                    if recursive and depth < max_depth:
-                        try:
-                            # Get count of items in folder for UI display
-                            folder_contents = self.list_movies(item['id'], False, depth + 1, max_depth)
-                            folder_item['item_count'] = len(folder_contents)
-                            folder_item['has_videos'] = any(content.get('type') == 'video' for content in folder_contents)
-                        except Exception as e:
-                            print(f"Error getting folder contents: {e}")
-                            folder_item['item_count'] = 0
-                            folder_item['has_videos'] = False
-                    
                     folders.append(folder_item)
                 elif self._is_video_file(item.get('mimeType'), item.get('name')):
                     movie_item = {
@@ -288,15 +209,23 @@ class DriveService:
             # Combine folders and movies, with folders first
             result = folders + movies
             
-            # If recursive and not at max depth, get contents of all subfolders
+            # If recursive and not at max depth, get contents of all subfolders.
+            # Each subfolder is queried exactly once here (not once more
+            # up-front just for item_count) — item_count/has_videos are
+            # derived from this same recursive fetch's direct children.
             if recursive and depth < max_depth:
                 all_results = result.copy()
                 for folder in folders:
                     try:
                         folder_contents = self.list_movies(folder['id'], True, depth + 1, max_depth)
+                        direct_children = [c for c in folder_contents if c.get('parent_folder_id') == folder['id']]
+                        folder['item_count'] = len(direct_children)
+                        folder['has_videos'] = any(c.get('type') == 'video' for c in direct_children)
                         all_results.extend(folder_contents)
                     except Exception as e:
                         print(f"Error getting recursive folder contents: {e}")
+                        folder['item_count'] = 0
+                        folder['has_videos'] = False
                 result = all_results
             
             # Cache the results

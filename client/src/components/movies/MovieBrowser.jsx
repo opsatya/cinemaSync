@@ -35,7 +35,8 @@ import { Link } from 'react-router-dom';
 import { fetchMoviesList, searchMovies, getRecentMovies, getStreamLink, getGoogleHealth, getGoogleTokensStatus, getGoogleAuthUrl, fetchDriveVideos } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
 
-const MovieBrowser = ({ onSelectMovie, roomId }) => {
+const MovieBrowser = ({ onSelectMovie, roomId, mode = 'change' }) => {
+  const selectActionLabel = mode === 'addToPlaylist' ? 'Add to Playlist' : 'Play in theater';
   const { backendToken } = useAuth();
   const [movies, setMovies] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -285,11 +286,12 @@ const MovieBrowser = ({ onSelectMovie, roomId }) => {
         </Typography>
       </CardContent>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', p: 1, pt: 0 }}>
-        <Tooltip title="Play in theater">
-          <IconButton 
-            color="primary" 
+        <Tooltip title={selectActionLabel}>
+          <IconButton
+            color="primary"
             onClick={() => handleMovieSelect(movie)}
             size="small"
+            aria-label={selectActionLabel}
           >
             <PlayArrow />
           </IconButton>

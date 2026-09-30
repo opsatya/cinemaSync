@@ -18,27 +18,28 @@ import {
   ListItemText,
   ListItemAvatar,
   Chip,
-  IconButton,
   useTheme,
   Tab,
   Tabs,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import {
   Edit,
   Save,
   MovieFilter,
   History,
-  Favorite,
   Settings,
   Notifications,
   CloudUpload,
 } from '@mui/icons-material';
 import { motion } from 'framer-motion';
+import { fetchMyRooms } from '../utils/api';
 
 const Profile = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const { currentUser, logout } = useAuth();
+  const { currentUser, backendToken, logout } = useAuth();
   const [tabValue, setTabValue] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [profileData, setProfileData] = useState({
@@ -68,18 +69,51 @@ const Profile = () => {
     }
   }, [currentUser, navigate]);
 
-  // Mock data
-  const recentRooms = [
-    { id: 1, name: 'Friday Movie Night', date: '2025-03-25', participants: 4 },
-    { id: 2, name: 'Sci-Fi Marathon', date: '2025-03-20', participants: 3 },
-    { id: 3, name: 'Classic Films', date: '2025-03-15', participants: 2 },
-  ];
+  const [rooms, setRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomsError, setRoomsError] = useState('');
 
-  const favoriteMovies = [
-    { id: 1, title: 'Inception', genre: 'Sci-Fi' },
-    { id: 2, title: 'The Matrix', genre: 'Sci-Fi' },
-    { id: 3, title: 'Interstellar', genre: 'Sci-Fi' },
-  ];
+  useEffect(() => {
+    if (!backendToken) return;
+    const loadRooms = async () => {
+      try {
+        setRoomsLoading(true);
+        setRoomsError('');
+        const myRooms = await fetchMyRooms(backendToken);
+        setRooms(myRooms || []);
+      } catch (err) {
+        setRoomsError(err.message || 'Could not load your rooms.');
+      } finally {
+        setRoomsLoading(false);
+      }
+    };
+    loadRooms();
+  }, [backendToken]);
+
+  const sortedRooms = [...rooms].sort(
+    (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)
+  );
+  const recentRooms = sortedRooms.slice(0, 5);
+
+  const movieKey = (ms) => (ms?.type === 'google_drive' ? `drive:${ms.video_id}` : `link:${ms?.value}`);
+  const roomsWithMovies = sortedRooms.filter((r) => r.movie_source && (r.movie_source.video_id || r.movie_source.value));
+
+  const seenMovieKeys = new Set();
+  const recentlyWatched = [];
+  for (const r of roomsWithMovies) {
+    const key = movieKey(r.movie_source);
+    if (seenMovieKeys.has(key)) continue;
+    seenMovieKeys.add(key);
+    recentlyWatched.push({
+      room_id: r.room_id,
+      title: r.movie_source.video_name || (r.movie_source.type === 'direct_link' ? 'Direct link video' : 'Untitled video'),
+      roomName: r.name,
+      date: r.updated_at,
+    });
+  }
+
+  const roomsCreatedCount = rooms.filter((r) => String(r.host_id) === String(currentUser?.uid)).length;
+  const moviesWatchedCount = seenMovieKeys.size;
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
@@ -302,7 +336,7 @@ const Profile = () => {
                           borderRadius: '12px',
                         }}
                       >
-                        <Typography variant="h4">12</Typography>
+                        <Typography variant="h4" data-testid="stat-rooms-created">{roomsCreatedCount}</Typography>
                         <Typography variant="body2">Rooms Created</Typography>
                       </Paper>
                     </Grid>
@@ -316,7 +350,7 @@ const Profile = () => {
                           borderRadius: '12px',
                         }}
                       >
-                        <Typography variant="h4">36</Typography>
+                        <Typography variant="h4" data-testid="stat-movies-watched">{moviesWatchedCount}</Typography>
                         <Typography variant="body2">Movies Watched</Typography>
                       </Paper>
                     </Grid>
@@ -349,120 +383,139 @@ const Profile = () => {
                 }}
               >
                 <Tab icon={<History />} label="Recent Rooms" />
-                <Tab icon={<Favorite />} label="Favorites" />
+                <Tab icon={<MovieFilter />} label="Recently Watched" />
                 <Tab icon={<Settings />} label="Settings" />
               </Tabs>
 
-              {/* Recent Rooms Tab */}
-              {tabValue === 0 && (
-                <Box sx={{ p: 3 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Your Recent Movie Rooms
-                  </Typography>
-                  <List sx={{ width: '100%' }}>
-                    {recentRooms.map((room) => (
-                      <motion.div
-                        key={room.id}
-                        whileHover={{ scale: 1.02 }}
-                        transition={{ type: 'spring', stiffness: 400, damping: 10 }}
-                      >
-                        <Paper
-                          elevation={0}
-                          sx={{
-                            mb: 2,
-                            borderRadius: '12px',
-                            overflow: 'hidden',
-                            backgroundColor: 'rgba(30, 41, 59, 0.5)',
-                            '&:hover': {
-                              backgroundColor: 'rgba(30, 41, 59, 0.8)',
-                            },
-                          }}
-                        >
-                          <ListItem
-                            secondaryAction={
-                              <Button
-                                variant="contained"
-                                size="small"
-                                sx={{ borderRadius: '20px' }}
-                              >
-                                Rejoin
-                              </Button>
-                            }
-                          >
-                            <ListItemAvatar>
-                              <Avatar sx={{ bgcolor: theme.palette.primary.main }}>
-                                <MovieFilter />
-                              </Avatar>
-                            </ListItemAvatar>
-                            <ListItemText
-                              primary={room.name}
-                              secondary={
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                                  <span style={{ fontSize: '0.75rem', color: 'rgba(255, 255, 255, 0.7)' }}>
-                                    {room.date}
-                                  </span>
-                                  <Chip
-                                    label={`${room.participants} viewers`}
-                                    size="small"
-                                    sx={{ height: 20, fontSize: '0.7rem' }}
-                                  />
-                                </Box>
-                              }
-                            />
-                          </ListItem>
-                        </Paper>
-                      </motion.div>
-                    ))}
-                  </List>
-                </Box>
+              {roomsError && (
+                <Alert severity="error" sx={{ m: 3, mb: 0 }}>
+                  {roomsError}
+                </Alert>
               )}
 
-              {/* Favorites Tab */}
-              {tabValue === 1 && (
-                <Box sx={{ p: 3 }}>
-                  <Typography variant="h6" gutterBottom>
-                    Your Favorite Movies
-                  </Typography>
-                  <List sx={{ width: '100%' }}>
-                    {favoriteMovies.map((movie) => (
-                      <motion.div
-                        key={movie.id}
-                        whileHover={{ scale: 1.02 }}
-                        transition={{ type: 'spring', stiffness: 400, damping: 10 }}
-                      >
-                        <Paper
-                          elevation={0}
-                          sx={{
-                            mb: 2,
-                            borderRadius: '12px',
-                            overflow: 'hidden',
-                            backgroundColor: 'rgba(30, 41, 59, 0.5)',
-                            '&:hover': {
-                              backgroundColor: 'rgba(30, 41, 59, 0.8)',
-                            },
-                          }}
-                        >
-                          <ListItem
-                            secondaryAction={
-                              <IconButton edge="end" aria-label="delete" color="error">
-                                <Favorite />
-                              </IconButton>
-                            }
+              {roomsLoading ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : (
+                <>
+                  {/* Recent Rooms Tab */}
+                  {tabValue === 0 && (
+                    <Box sx={{ p: 3 }}>
+                      <Typography variant="h6" gutterBottom>
+                        Your Recent Movie Rooms
+                      </Typography>
+                      {recentRooms.length === 0 && (
+                        <Typography variant="body2" color="text.secondary">
+                          You haven't joined any rooms yet.
+                        </Typography>
+                      )}
+                      <List sx={{ width: '100%' }}>
+                        {recentRooms.map((room) => (
+                          <motion.div
+                            key={room.room_id}
+                            whileHover={{ scale: 1.02 }}
+                            transition={{ type: 'spring', stiffness: 400, damping: 10 }}
                           >
-                            <ListItemAvatar>
-                              <Avatar sx={{ bgcolor: theme.palette.secondary.main }}>
-                                {movie.title.charAt(0)}
-                              </Avatar>
-                            </ListItemAvatar>
-                            <ListItemText
-                              primary={movie.title}
-                              secondary={
-                                <Box sx={{ mt: 0.5 }}>
-                                  <Chip
-                                    label={movie.genre}
+                            <Paper
+                              elevation={0}
+                              sx={{
+                                mb: 2,
+                                borderRadius: '12px',
+                                overflow: 'hidden',
+                                backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                                '&:hover': {
+                                  backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                                },
+                              }}
+                            >
+                              <ListItem
+                                secondaryAction={
+                                  <Button
+                                    variant="contained"
                                     size="small"
-                                    sx={{ height: 20, fontSize: '0.7rem' }}
-                                  />
+                                    sx={{ borderRadius: '20px' }}
+                                    onClick={() => navigate(`/theater/${room.room_id}`)}
+                                  >
+                                    Rejoin
+                                  </Button>
+                                }
+                              >
+                                <ListItemAvatar>
+                                  <Avatar sx={{ bgcolor: theme.palette.primary.main }}>
+                                    <MovieFilter />
+                                  </Avatar>
+                                </ListItemAvatar>
+                                <ListItemText
+                                  primary={room.name}
+                                  secondaryTypographyProps={{ component: 'div' }}
+                                  secondary={
+                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                                      <span style={{ fontSize: '0.75rem', color: 'rgba(255, 255, 255, 0.7)' }}>
+                                        {room.updated_at ? new Date(room.updated_at).toLocaleDateString() : ''}
+                                      </span>
+                                      <Chip
+                                        label={`${room.participants?.length || 0} viewers`}
+                                        size="small"
+                                        sx={{ height: 20, fontSize: '0.7rem' }}
+                                      />
+                                    </Box>
+                                  }
+                                />
+                              </ListItem>
+                            </Paper>
+                          </motion.div>
+                        ))}
+                      </List>
+                    </Box>
+                  )}
+
+                  {/* Recently Watched Tab */}
+                  {tabValue === 1 && (
+                    <Box sx={{ p: 3 }}>
+                      <Typography variant="h6" gutterBottom>
+                        Movies You've Watched
+                      </Typography>
+                      {recentlyWatched.length === 0 && (
+                        <Typography variant="body2" color="text.secondary">
+                          No movies watched yet — join a room and start a movie!
+                        </Typography>
+                      )}
+                      <List sx={{ width: '100%' }}>
+                        {recentlyWatched.map((movie) => (
+                          <motion.div
+                            key={movie.room_id}
+                            whileHover={{ scale: 1.02 }}
+                            transition={{ type: 'spring', stiffness: 400, damping: 10 }}
+                          >
+                            <Paper
+                              elevation={0}
+                              sx={{
+                                mb: 2,
+                                borderRadius: '12px',
+                                overflow: 'hidden',
+                                backgroundColor: 'rgba(30, 41, 59, 0.5)',
+                                '&:hover': {
+                                  backgroundColor: 'rgba(30, 41, 59, 0.8)',
+                                },
+                              }}
+                            >
+                              <ListItem>
+                                <ListItemAvatar>
+                                  <Avatar sx={{ bgcolor: theme.palette.secondary.main }}>
+                                    {movie.title.charAt(0)}
+                                  </Avatar>
+                                </ListItemAvatar>
+                                <ListItemText
+                                  primary={movie.title}
+                                  secondaryTypographyProps={{ component: 'div' }}
+                                  secondary={
+                                    <Box sx={{ mt: 0.5 }}>
+                                      <Chip
+                                        label={movie.roomName}
+                                        size="small"
+                                        sx={{ height: 20, fontSize: '0.7rem' }}
+                                      />
                                 </Box>
                               }
                             />
@@ -527,6 +580,8 @@ const Profile = () => {
                     </ListItem>
                   </List>
                 </Box>
+              )}
+                </>
               )}
             </Paper>
           </Grid>

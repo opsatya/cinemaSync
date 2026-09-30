@@ -53,32 +53,27 @@ def _build_flow():
     return flow
 
 def _extract_user_id_from_state(state_value: str):
+    """State must be a validly signed JWT minted by this backend. There is no
+    fallback to unsigned parsing — accepting an unsigned/attacker-supplied
+    state here would let anyone bind arbitrary OAuth tokens to any user_id."""
     if not state_value:
         return None
     try:
-        # State can be a JWT or a URL-encoded query. Try JWT first.
         data = jwt.decode(state_value, JWT_SECRET, algorithms=['HS256'])
         return data.get('user_id')
     except Exception:
-        # Fallback: parse as query string like key=value&user_id=...
-        try:
-            parts = dict(pair.split('=') for pair in state_value.split('&') if '=' in pair)
-            return parts.get('user_id')
-        except Exception:
-            return None
+        return None
 
 @google_bp.route('/auth/url', methods=['GET'])
+@token_required
 def get_auth_url():
     try:
         flow = _build_flow()
 
-        # Optional: pass caller token or user_id into state
-        state = request.args.get('state')
-        if not state:
-            # Try Authorization: Bearer <jwt>
-            auth_header = request.headers.get('Authorization', '')
-            if auth_header.startswith('Bearer '):
-                state = auth_header.split(' ')[1]
+        # State is always the caller's own verified backend JWT (from
+        # token_required) — never a client-supplied value — so the callback
+        # can only ever bind tokens to the user who actually authenticated.
+        state = request.headers.get('Authorization', '').split(' ', 1)[1]
 
         authorization_url, _ = flow.authorization_url(
             access_type='offline',
@@ -147,10 +142,6 @@ def auth_callback():
         # Determine user
         print(f"   Extracting user_id from state: {state_value}")
         user_id = _extract_user_id_from_state(state_value)
-        if not user_id:
-            # As a last resort, allow ?user_id= in callback
-            user_id = request.args.get('user_id')
-            print(f"   Fallback user_id from query: {user_id}")
         print(f"   Final user_id: {user_id}")
         if not user_id:
             print("   ❌ Unable to determine user_id - returning 400")
@@ -178,6 +169,13 @@ def auth_callback():
         print("   Saving tokens to database...")
         saved = UserToken.save_tokens(user_id, 'google', token_data)
         print(f"   Tokens saved: {saved}")
+
+        if not saved:
+            frontend_redirect = os.getenv('OAUTH_SUCCESS_REDIRECT')
+            if frontend_redirect:
+                query = urlencode({'status': 'error', 'message': 'token_storage_failed'})
+                return redirect(f"{frontend_redirect}?{query}")
+            return jsonify({'success': False, 'message': 'Failed to store Google tokens'}), 500
 
         # You can redirect back to the frontend with a success flag
         frontend_redirect = os.getenv('OAUTH_SUCCESS_REDIRECT')

@@ -147,7 +147,10 @@ const MyRooms = () => {
       name: room.name || '',
       description: room.description || '',
       privacy: isPrivate ? 'private' : 'public',
-      password: room.password || '',
+      // The backend never returns the plaintext/hashed password, so this
+      // always starts blank. A blank value on save means "leave the
+      // existing password untouched", not "clear it" — see handleSaveEdit.
+      password: '',
       allowChat: room.enable_chat ?? true,
       allowReactions: room.enable_reactions ?? true,
     });
@@ -165,10 +168,17 @@ const MyRooms = () => {
         name: editForm.name,
         description: editForm.description,
         is_private: editForm.privacy === 'private',
-        password: editForm.privacy === 'private' ? (editForm.password || null) : null,
         enable_chat: !!editForm.allowChat,
         enable_reactions: !!editForm.allowReactions,
       };
+      if (editForm.privacy !== 'private') {
+        // Public rooms don't need a password.
+        payload.password = null;
+      } else if (editForm.password) {
+        // Only touch the password when the user actually typed a new one;
+        // leaving the field blank must not strip an existing password.
+        payload.password = editForm.password;
+      }
       const updated = await updateRoom(String(editingRoom.room_id || editingRoom.id), payload, backendToken);
       // Replace in local state
       setRooms((prev) =>
@@ -200,7 +210,9 @@ const MyRooms = () => {
     try {
       const roomId = String(room.room_id || room.id);
       if (!roomId) return;
-      const confirmDelete = window.confirm('Are you sure you want to delete this room?');
+      const confirmDelete = window.confirm(
+        'This will deactivate the room and remove it from your list. It will no longer be joinable, but its record is kept rather than permanently erased. Continue?'
+      );
       if (!confirmDelete) return;
       await deleteRoom(roomId, backendToken);
       setRooms((prev) => prev.filter((r) => String(r.room_id || r.id) !== roomId));
@@ -452,13 +464,13 @@ const MyRooms = () => {
                             
                             <CardActions sx={{ p: 2, pt: 0, justifyContent: 'space-between' }}>
                               <Box sx={{ display: 'flex', gap: 1 }}>
-                                <IconButton size="small" color="primary" onClick={() => openEdit(room)}>
+                                <IconButton size="small" color="primary" aria-label="Edit room" onClick={() => openEdit(room)}>
                                   <Edit fontSize="small" />
                                 </IconButton>
-                                <IconButton size="small" color="primary" onClick={() => handleShare(room)}>
+                                <IconButton size="small" color="primary" aria-label="Share room" onClick={() => handleShare(room)}>
                                   <Share fontSize="small" />
                                 </IconButton>
-                                <IconButton size="small" color="error" onClick={() => handleDelete(room)}>
+                                <IconButton size="small" color="error" aria-label="Delete room" onClick={() => handleDelete(room)}>
                                   <Delete fontSize="small" />
                                 </IconButton>
                               </Box>

@@ -335,12 +335,3 @@ const Register = () => {
 };
 
 export default Register;
-
-// Add Snackbar for success message
-const SuccessSnackbar = ({ open, message, onClose }) => (
-  <Snackbar open={open} autoHideDuration={6000} onClose={onClose}>
-    <Alert onClose={onClose} severity="success" sx={{ width: '100%' }}>
-      {message}
-    </Alert>
-  </Snackbar>
-);

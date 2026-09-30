@@ -2,15 +2,34 @@ from flask_socketio import SocketIO, emit, join_room, leave_room, disconnect
 from app.models import Room
 from datetime import datetime
 import os
+import time
 import jwt
 from flask import session, request
 from werkzeug.security import check_password_hash
 
-# Initialize SocketIO with threading mode and disabled upgrades to prevent WebSocket issues
+# In-memory per-user rate limit for join_room attempts (password guessing
+# target). Keyed by authenticated user_id, since join_room requires a valid
+# session — an anonymous IP-only limit would be trivially bypassed by
+# creating throwaway accounts anyway, but this at least caps how fast any
+# single account can hammer a room's password.
+_JOIN_ROOM_ATTEMPTS = {}
+JOIN_ROOM_RATE_LIMIT = 20
+JOIN_ROOM_RATE_WINDOW_SECONDS = 60
+
+
+def _is_join_room_rate_limited(user_id):
+    now = time.time()
+    attempts = [t for t in _JOIN_ROOM_ATTEMPTS.get(user_id, []) if now - t < JOIN_ROOM_RATE_WINDOW_SECONDS]
+    attempts.append(now)
+    _JOIN_ROOM_ATTEMPTS[user_id] = attempts
+    return len(attempts) > JOIN_ROOM_RATE_LIMIT
+
+# Initialize SocketIO with eventlet so real WebSocket connections are
+# supported (falls back to long-polling only when a WS upgrade isn't possible)
 socketio = SocketIO(
-    async_mode='threading',
-    allow_upgrades=False,
-    transports=['polling'],
+    async_mode='eventlet',
+    allow_upgrades=True,
+    transports=['websocket', 'polling'],
     logger=False,
     engineio_logger=False
 )
@@ -40,11 +59,11 @@ def init_socketio(app):
         allowed_origins.append(frontend_url.rstrip("/"))
 
     socketio.init_app(
-        app, 
+        app,
         cors_allowed_origins=allowed_origins,
-        async_mode='threading',
-        allow_upgrades=False,
-        transports=['polling']
+        async_mode='eventlet',
+        allow_upgrades=True,
+        transports=['websocket', 'polling']
     )
     register_handlers()
     return socketio
@@ -81,9 +100,26 @@ def register_handlers():
     
     @socketio.on('disconnect')
     def handle_disconnect():
-        """Handle client disconnection"""
-        # Client disconnection is handled by the leave_room event
-        pass
+        """Clean up participant state when a client disconnects without an
+        explicit leave_room (tab close, crash, network loss). Without this,
+        participants never leave the room document and it can never be
+        auto-deactivated once empty."""
+        user_id = session.get('user_id')
+        room_id = session.get('room_id')
+        if not user_id or not room_id:
+            return
+
+        try:
+            room_data = Room.remove_participant(room_id, user_id)
+        except ValueError:
+            # Room already gone/participant already removed — nothing to do.
+            return
+
+        emit('user_left', {
+            'user_id': user_id,
+            'room_id': room_id,
+            'participants': room_data['participants']
+        }, to=room_id)
     
     @socketio.on('join_room')
     def handle_join_room(data):
@@ -101,7 +137,12 @@ def register_handlers():
                 msg = 'Unauthorized'
                 emit('error', {'message': msg})
                 return {'error': msg}
-            
+
+            if _is_join_room_rate_limited(user_id):
+                msg = 'Too many join attempts. Please wait a moment and try again.'
+                emit('error', {'message': msg})
+                return {'error': msg}
+
             # Check if room exists
             room_data = Room.find_by_id(room_id)
             if not room_data:
@@ -135,7 +176,9 @@ def register_handlers():
             
             # Join the socket.io room
             join_room(room_id)
-            
+            # Track which room this connection is in so disconnect can clean up
+            session['room_id'] = room_id
+
             # Notify all users in the room
             safe_room = _to_json_safe(room_data)
             emit('user_joined', {
@@ -188,7 +231,8 @@ def register_handlers():
             
             # Leave the socket.io room
             leave_room(room_id)
-            
+            session.pop('room_id', None)
+
             # Notify all users in the room
             emit('user_left', {
                 'user_id': user_id,

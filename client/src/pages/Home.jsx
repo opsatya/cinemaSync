@@ -20,8 +20,9 @@ const Home = () => {
   const [roomCode, setRoomCode] = useState('');
 
   const handleJoinRoom = () => {
-    if (roomCode.trim()) {
-      navigate(`/theater/${roomCode}`);
+    const normalizedCode = roomCode.trim().toUpperCase();
+    if (normalizedCode) {
+      navigate(`/theater/${normalizedCode}`);
     }
   };
 

@@ -3,6 +3,7 @@ import os
 import jwt
 from datetime import datetime, timedelta
 from .firebase_admin import verify_firebase_token
+from .utils import rate_limit
 
 auth_bp = Blueprint('auth', __name__, url_prefix='/api/auth')
 
@@ -10,6 +11,7 @@ JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 JWT_EXPIRES_MIN = int(os.getenv('JWT_EXPIRES_MIN', '4320'))  # default 3 days
 
 @auth_bp.route('/exchange', methods=['POST'])
+@rate_limit(limit=20, per=60)
 def exchange_token():
     """
     Issue a backend JWT for a verified Firebase user.

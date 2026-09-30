@@ -2,8 +2,10 @@ from flask import Blueprint, jsonify, request, current_app, redirect, url_for, R
 from app.drive_service import DriveService
 from app.models import MovieMetadata
 from app.auth_middleware import token_required
+from werkzeug.utils import secure_filename
 import io
 import os
+import uuid
 import jwt
 from datetime import datetime
 from googleapiclient.http import MediaIoBaseDownload
@@ -11,6 +13,34 @@ from google.auth.exceptions import RefreshError
 
 api_bp = Blueprint('api', __name__, url_prefix='/api')
 drive_service = DriveService()
+
+
+def _safe_upload_path(temp_dir, filename):
+    """Build a filesystem path for an uploaded file that can never escape
+    temp_dir, regardless of what the client sent as the filename (path
+    traversal, absolute paths, etc.), and never collides with a concurrent
+    upload of the same name."""
+    safe_name = secure_filename(filename) or 'upload'
+    unique_name = f'{uuid.uuid4().hex}_{safe_name}'
+    return os.path.join(temp_dir, unique_name)
+
+
+def _parse_range_header(range_header, file_size):
+    """Parse a single-range 'bytes=start-end' Range header against a known
+    file size. Returns (start, end) inclusive, or None if absent/invalid."""
+    if not range_header or not range_header.startswith('bytes=') or not file_size:
+        return None
+    try:
+        spec = range_header.split('=', 1)[1]
+        start_str, _, end_str = spec.partition('-')
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+        end = min(end, file_size - 1)
+        if start < 0 or start > end:
+            return None
+        return start, end
+    except (ValueError, IndexError):
+        return None
 
 @api_bp.route('/', methods=['GET'])
 def index():
@@ -115,14 +145,41 @@ def stream_file(file_id):
                 return jsonify({'success': False, 'message': 'user_id required for user-owned files'}), 400
             # Metadata via user service
             svc = drive_service.user_service(user_id)
-            file_metadata = svc.files().get(fileId=file_id, fields='id, name, mimeType').execute()
+            file_metadata = svc.files().get(fileId=file_id, fields='id, name, mimeType, size').execute()
             request_stream = svc.files().get_media(fileId=file_id)
         else:
             # Get file metadata via service account
             file_metadata = drive_service.get_file_metadata(file_id)
             request_stream = drive_service.service.files().get_media(fileId=file_id)
-        
-        # Stream the file in chunks instead of loading it entirely into memory
+
+        # Honor Range requests (seeking/scrubbing) by fetching only the
+        # requested byte span from Drive and returning 206 Partial Content.
+        range_header = request.headers.get('Range')
+        file_size = int(file_metadata.get('size') or 0)
+        byte_range = _parse_range_header(range_header, file_size)
+        if byte_range:
+            start, end = byte_range
+            request_stream.headers['Range'] = f'bytes={start}-{end}'
+            content = request_stream.execute()
+
+            try:
+                MovieMetadata.save_metadata(file_metadata)
+            except Exception as e:
+                print(f"Failed to save metadata to MongoDB: {e}")
+
+            range_response = Response(
+                content,
+                status=206,
+                mimetype=file_metadata.get('mimeType', 'video/mp4'),
+            )
+            range_response.headers.set('Accept-Ranges', 'bytes')
+            range_response.headers.set('Content-Range', f'bytes {start}-{end}/{file_size}')
+            range_response.headers.set('Content-Length', str(end - start + 1))
+            range_response.headers.set('Content-Disposition', f'inline; filename="{file_metadata.get("name", "video.mp4")}"')
+            return range_response
+
+        # No (usable) Range header: stream the file in chunks instead of
+        # loading it entirely into memory.
         from flask import stream_with_context
 
         CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
@@ -283,33 +340,6 @@ def get_recent_movies():
 
 # ---------- User Drive Endpoints ----------
 
-@api_bp.route('/drive/files', methods=['GET'])
-@token_required
-def list_user_files():
-    """List user-owned video files accessible to the app"""
-    try:
-        user_id = g.current_user_id
-        files = drive_service.list_user_videos(user_id)
-        return jsonify({'success': True, 'files': files, 'count': len(files)}), 200
-    except RefreshError as e:
-        # Invalidate tokens and clear cached service
-        try:
-            from app.models import UserToken
-            UserToken.invalidate_tokens(g.current_user_id, 'google', reason='invalid_grant')
-            try:
-                drive_service._user_services.pop(g.current_user_id, None)
-            except Exception:
-                pass
-        except Exception:
-            pass
-        return jsonify({
-            'success': False,
-            'code': 'reauth_required',
-            'message': 'Google authorization expired or revoked. Please reconnect your Google Drive account.'
-        }), 401
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 500
-
 @api_bp.route('/drive/upload', methods=['POST'])
 @token_required
 def upload_user_file():
@@ -329,7 +359,7 @@ def upload_user_file():
         # Save to a temp file path
         temp_dir = os.path.join('/tmp', 'cinemasync_uploads')
         os.makedirs(temp_dir, exist_ok=True)
-        temp_path = os.path.join(temp_dir, file_storage.filename)
+        temp_path = _safe_upload_path(temp_dir, file_storage.filename)
         file_storage.save(temp_path)
 
         try:

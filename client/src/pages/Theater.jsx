@@ -41,7 +41,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useAuth } from '../context/AuthContext';
 import { socket } from '../context/socket';
-import { getRoomDetails, getUserDriveStreamUrl, setRoomVideo } from '../utils/api';
+import { getRoomDetails, getUserDriveStreamUrl, setRoomVideo, addPlaylistItem, removePlaylistItem, playPlaylistItem } from '../utils/api';
 // Import components
 import VideoPlayer from '../components/theater/VideoPlayer';
 import ChatPanel from '../components/chat/ChatPanel';
@@ -89,6 +89,9 @@ const Theater = () => {
   // Movie selection state
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [showMovieBrowser, setShowMovieBrowser] = useState(false);
+  // Whether the Movie Browser dialog is being used to change the room's
+  // current video ('change') or to queue a video into the playlist ('addToPlaylist')
+  const [movieBrowserMode, setMovieBrowserMode] = useState('change');
   const videoRef = useRef(null);
 
   // Derive presets from room.movie_source to avoid showing Browse UI when a video is already set
@@ -417,6 +420,11 @@ const Theater = () => {
       }
     };
 
+    // Keep the playlist in sync whenever the host adds/removes a queued video
+    const onPlaylistUpdated = (data) => {
+      setRoom((prev) => ({ ...(prev || {}), playlist: data?.playlist || [] }));
+    };
+
     // FIXED: Enhanced error handling
     const onServerError = (err) => {
       const msg = err?.message || 'Unknown server error';
@@ -465,6 +473,7 @@ const Theater = () => {
     socket.on('new_chat_message', onNewChat);
     socket.on('new_reaction', onNewReaction);
     socket.on('video_changed', onVideoChanged);
+    socket.on('playlist_updated', onPlaylistUpdated);
     socket.on('error', onServerError);
     socket.on('connect_error', onConnectError);
 
@@ -491,6 +500,7 @@ const Theater = () => {
       socket.off('new_chat_message', onNewChat);
       socket.off('new_reaction', onNewReaction);
       socket.off('video_changed', onVideoChanged);
+      socket.off('playlist_updated', onPlaylistUpdated);
       socket.off('error', onServerError);
       socket.off('connect_error', onConnectError);
       
@@ -643,6 +653,18 @@ const Theater = () => {
         setError('Invalid movie selection.');
         return;
       }
+
+      if (movieBrowserMode === 'addToPlaylist') {
+        const playlist = await addPlaylistItem(
+          roomId,
+          { type: 'google_drive', video_id: movie.id, video_name: movie.name || '' },
+          backendToken
+        );
+        setRoom((prev) => ({ ...(prev || {}), playlist }));
+        setShowMovieBrowser(false);
+        return;
+      }
+
       // Update backend, which will broadcast to all via socket and return updated room
       const updatedRoom = await setRoomVideo(roomId, { video_id: movie.id, video_name: movie.name || '' }, backendToken);
       setRoom(updatedRoom || room);
@@ -654,6 +676,42 @@ const Theater = () => {
     } catch (e) {
       console.error('❌ [Theater] Failed to set room video:', e);
       setError(e.message || 'Failed to set room video');
+    }
+  };
+
+  // Host opens the Movie Browser specifically to queue a video, not to
+  // change what's currently playing
+  const handleAddToPlaylist = () => {
+    if (!isHost) return;
+    setMovieBrowserMode('addToPlaylist');
+    setShowMovieBrowser(true);
+  };
+
+  const handleRemovePlaylistItem = async (itemId) => {
+    if (!isHost) return;
+    try {
+      const playlist = await removePlaylistItem(roomId, itemId, backendToken);
+      setRoom((prev) => ({ ...(prev || {}), playlist }));
+    } catch (e) {
+      setError(e.message || 'Failed to remove playlist item');
+    }
+  };
+
+  const handlePlayPlaylistItem = async (itemId) => {
+    if (!isHost) return;
+    try {
+      const updatedRoom = await playPlaylistItem(roomId, itemId, backendToken);
+      setRoom(updatedRoom || room);
+      const ms = updatedRoom?.movie_source || {};
+      if (ms.type === 'google_drive' && ms.video_id) {
+        setSelectedMovie({ kind: 'drive', id: ms.video_id, name: ms.video_name || 'Google Drive Video' });
+      } else if (ms.type === 'direct_link' && ms.value) {
+        setSelectedMovie({ kind: 'direct', url: ms.value, name: 'Direct Video' });
+      }
+      setIsPlaying(false);
+      setCurrentTime(0);
+    } catch (e) {
+      setError(e.message || 'Failed to play queued item');
     }
   };
   
@@ -890,7 +948,7 @@ const Theater = () => {
                       <Button
                         variant="contained"
                         color="primary"
-                        onClick={() => setShowMovieBrowser(true)}
+                        onClick={() => { setMovieBrowserMode('change'); setShowMovieBrowser(true); }}
                         disabled={roomJoinStatus !== 'joined'}
                       >
                         Browse Movies
@@ -961,7 +1019,7 @@ const Theater = () => {
                       variant="outlined"
                       size="small"
                       startIcon={<Movie />}
-                      onClick={() => setShowMovieBrowser(true)}
+                      onClick={() => { setMovieBrowserMode('change'); setShowMovieBrowser(true); }}
                       sx={{ ml: 2 }}
                       disabled={roomJoinStatus !== 'joined'}
                     >
@@ -1097,10 +1155,16 @@ const Theater = () => {
             <Close />
           </IconButton>
         </Box>
-        <UserList users={users} />
+        <UserList users={users} currentUserId={currentUser?.uid} />
         
         <Typography variant="h6" sx={{ mt: 4, mb: 2 }}>Playlist</Typography>
-        <PlaylistPanel playlist={room?.playlist || []} />
+        <PlaylistPanel
+          playlist={room?.playlist || []}
+          isHost={isHost}
+          onAdd={handleAddToPlaylist}
+          onPlay={handlePlayPlaylistItem}
+          onRemove={handleRemovePlaylistItem}
+        />
       </Drawer>
       
       {/* Movie Browser Dialog */}
@@ -1112,14 +1176,16 @@ const Theater = () => {
       >
         <DialogTitle>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6">Select a Movie</Typography>
+            <Typography variant="h6">
+              {movieBrowserMode === 'addToPlaylist' ? 'Add a Video to the Playlist' : 'Select a Movie'}
+            </Typography>
             <IconButton onClick={() => setShowMovieBrowser(false)}>
               <Close />
             </IconButton>
           </Box>
         </DialogTitle>
         <DialogContent>
-          <MovieBrowser onSelectMovie={handleMovieSelect} roomId={roomId} />
+          <MovieBrowser onSelectMovie={handleMovieSelect} roomId={roomId} mode={movieBrowserMode} />
         </DialogContent>
       </Dialog>
 
