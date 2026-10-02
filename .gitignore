@@ -20,4 +20,5 @@ __pycache__/
 Thumbs.db
 
 #credentials
-backend/credentials/*.json
+server/credentials/
+*service-account*.json
